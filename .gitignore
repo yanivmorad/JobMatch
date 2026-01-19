@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.env
+
+# Node
+node_modules/
+dist/
+.next/
+
+# Project Specific
+results.json
+server.log
+data/
+*.log
+
+# IDE
+.vscode/
+.idea/
