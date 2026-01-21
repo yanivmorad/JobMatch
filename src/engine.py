@@ -16,7 +16,7 @@ class JobAnalyzer:
             raise RuntimeError("❌ GEMINI_API_KEY missing in .env file")
 
         # שימוש במודל יציב ומהיר
-        self.model_name = "gemini-2.5-flash"
+        self.model_name = "gemini-2.5-flash-lite"
         self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={self.api_key}"
         self.headers = {"Content-Type": "application/json"}
 

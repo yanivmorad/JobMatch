@@ -35,8 +35,8 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
     
     const newOptimisticJobs = parsedLinks.map(url => ({
       url,
-      company: 'ממתין לשרת...',
-      status: 'pending',
+      company: 'בטעינה...',
+      status: 'NEW',
       isLocal: true
     }));
     setLocalJobs(prev => [...prev, ...newOptimisticJobs]);
@@ -74,6 +74,15 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
     }
   };
 
+  const handleCancel = async (url) => {
+    try {
+      await axios.delete(`http://localhost:8000/api/jobs`, { params: { url } });
+      onJobAdded(); 
+    } catch (err) {
+      console.error("Failed to cancel job", err);
+    }
+  };
+
   const removeLink = (linkToRemove) => {
     setParsedLinks(parsedLinks.filter(l => l !== linkToRemove));
   };
@@ -81,7 +90,11 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
   const displayQueue = useMemo(() => {
     const serverUrlSet = new Set(pendingJobs.map(j => j.url));
     const uniqueLocalJobs = localJobs.filter(j => !serverUrlSet.has(j.url));
-    return [...pendingJobs, ...uniqueLocalJobs];
+    // מסננים החוצה שגיאות מהתור - הן עוברות לדאשבורד הראשי
+    const activeQueue = [...pendingJobs, ...uniqueLocalJobs].filter(j => 
+        !['FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA'].includes(j.status)
+    );
+    return activeQueue;
   }, [pendingJobs, localJobs]);
 
   // --- UI מתוקן ובהיר ---
@@ -242,20 +255,26 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
                     displayQueue.map((job, idx) => (
                         <div key={job.url + idx} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
                             {/* פס סטטוס צדדי */}
-                            <div className={`absolute right-0 top-0 bottom-0 w-1 ${
-                                job.status === 'completed' ? 'bg-emerald-500' : 
-                                job.status === 'error' ? 'bg-rose-500' : 'bg-blue-500'
-                            }`}></div>
+                            <div className={`absolute right-0 top-0 bottom-0 w-1 bg-blue-500`}></div>
 
                             <div className="flex justify-between items-start mb-3 pr-2">
-                                <div className="w-[70%]">
+                                <div className="w-[60%]">
                                     <h4 className="font-bold text-slate-800 truncate text-sm">
                                         {job.company && job.company !== "Unknown" ? job.company : (job.isLocal ? "מעבד..." : "מזהה חברה...")}
                                     </h4>
                                     <p className="text-[10px] text-slate-400 truncate mt-0.5">{job.url.replace(/^https?:\/\//, '')}</p>
                                 </div>
-                                <div className="scale-90 origin-top-left">
+                                <div className="flex flex-col items-end gap-2">
                                     <StatusBadge status={job.status} />
+                                    {!job.isLocal && (
+                                        <button 
+                                            onClick={() => handleCancel(job.url)}
+                                            className="text-slate-300 hover:text-rose-500 transition-colors p-1"
+                                            title="ביטול ומחיקה"
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                             
@@ -263,9 +282,9 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
                             <div className="pr-2">
                                 <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
                                     <div className={`h-full rounded-full transition-all duration-1000 ease-out ${
-                                        job.status === 'completed' ? 'bg-emerald-500 w-full' :
-                                        job.status === 'analyzing' ? 'bg-purple-500 w-3/4' :
-                                        job.status === 'scraped' ? 'bg-blue-500 w-1/2' : 
+                                        job.status === 'COMPLETED' ? 'bg-emerald-500 w-full' :
+                                        job.status === 'ANALYZING' ? 'bg-purple-500 w-3/4' :
+                                        ['WAITING_FOR_AI', 'SCRAPING'].includes(job.status) ? 'bg-blue-500 w-1/2' : 
                                         'bg-blue-400 w-1/4 animate-pulse'
                                     }`}></div>
                                 </div>

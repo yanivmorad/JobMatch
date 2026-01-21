@@ -2,7 +2,7 @@
 import React from 'react';
 import JobCard from './JobCard'; // וודא שהנתיב נכון
 
-const ActiveJobsTab = ({ jobs, onAction, onRefresh }) => {
+const ActiveJobsTab = ({ jobs, onAction, onDelete, onRefresh }) => {
   if (jobs.length === 0) {
     return (
       <div className="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-slate-200">
@@ -31,6 +31,7 @@ const ActiveJobsTab = ({ jobs, onAction, onRefresh }) => {
             key={job.url} 
             job={job} 
             onAction={onAction} 
+            onDelete={onDelete}
           />
         ))}
       </div>

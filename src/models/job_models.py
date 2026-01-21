@@ -44,3 +44,10 @@ class TextSubmission(BaseModel):
 class ActionRequest(BaseModel):
     url: str
     action: str  # 'applied', 'ignored', 'archive', 'none'
+
+
+class ManualUpdate(BaseModel):
+    url: str
+    company: str
+    title: str
+    description: str

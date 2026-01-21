@@ -31,7 +31,7 @@ const JobDashboard = () => {
   // Smart Polling: אם יש משרות בתהליך, תרענן כל 2 שניות
   useEffect(() => {
     const hasPending = jobs.some(j => 
-      ['pending', 'scraping', 'scraped', 'analyzing'].includes(j.status)
+      ['NEW', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING'].includes(j.status)
     );
 
     let interval = null;
@@ -40,7 +40,6 @@ const JobDashboard = () => {
     }
     
     return () => {
-
       if (interval) clearInterval(interval);
     };
   }, [jobs]);
@@ -54,35 +53,44 @@ const handleCardAction = (job, action) => {
       ...j, 
       user_action: action, 
       is_archived: action !== 'none',
-      updated_at: new Date().toISOString()
     } : j));
     
     // קריאה לשרת
     axios.post('http://localhost:8000/api/jobs/action', { url, action })
       .catch(err => {
         console.error("Failed to update job action", err);
-        // כאן אפשר להוסיף לוגיקה שמחזירה את המצב לקדמותו במקרה של שגיאה
       });
+  };
+
+  const handleDeleteJob = async (job) => {
+    try {
+      await axios.delete('http://localhost:8000/api/jobs', { params: { url: job.url } });
+      setJobs(prev => prev.filter(j => j.url !== job.url));
+    } catch (err) {
+      console.error("Failed to delete job", err);
+    }
   };
 
   // 1. ממתינים ובתהליך
   const pendingJobs = jobs.filter(j =>
-    ['pending', 'scraping', 'scraped', 'analyzing'].includes(j.status)
+    ['NEW', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING', 'FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA'].includes(j.status)
   );
 
   // 2. משרות פעילות (הצעות שעוד לא עשית איתן כלום)
-  // הן Completed, לא בארכיון, ואין להן פעולת משתמש מוגדרת
+  // הן COMPLETED או FAILED (כדי שנוכל לתקן ידנית), לא בארכיון, ואין להן פעולת משתמש מוגדרת
   const activeJobs = jobs
-    .filter(j => j.status === 'completed' && !j.is_archived)
+    .filter(j => 
+      (j.status === 'COMPLETED' || ['FAILED_SCRAPE', 'NO_DATA'].includes(j.status)) 
+      && !j.is_archived
+    )
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
   // 3. משרות שנשלחו
-  // מציג רק משרות ששלחת אליהן קורות חיים והן עדיין בתהליך
   const appliedJobs = jobs
     .filter(j => j.user_action === 'applied')
-    .sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at));
+    .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
-  // 4. היסטוריה / ארכיון (משרות שנדחו או סומנו כלא רלוונטיות)
+  // 4. היסטוריה / ארכיון
   const historyJobs = jobs
     .filter(j => j.is_archived && j.user_action !== 'applied')
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
@@ -116,6 +124,7 @@ return (
               <ActiveJobsTab 
                 jobs={activeJobs} 
                 onAction={handleCardAction}
+                onDelete={handleDeleteJob}
                 onSwitchTab={setActiveTab} 
                 onRefresh={fetchJobs} 
               />

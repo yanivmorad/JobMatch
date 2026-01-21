@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { Building2, MapPin, Info, Target, TrendingUp, Calendar } from 'lucide-react';
 import JobModal from './JobModal';
 
-const JobCard = ({ job, onAction }) => {
+const JobCard = ({ job, onAction, onDelete }) => {
   const [isModalOpen, setIsModalOpen] = React.useState(false);
 
   useEffect(() => {
@@ -89,6 +89,7 @@ const JobCard = ({ job, onAction }) => {
           job={job}
           onClose={() => setIsModalOpen(false)}
           onAction={(status) => onAction(job, status)}
+          onDelete={() => onDelete(job)}
         />
       )}
     </>

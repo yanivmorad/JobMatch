@@ -3,41 +3,56 @@ import { Clock, Download, CheckCircle, Sparkles, AlertCircle, Loader2 } from 'lu
 
 const StatusBadge = ({ status }) => {
   const config = {
-    pending: { 
+    NEW: { 
       style: "bg-gray-100 text-gray-500",
-      label: "ממתין לתור",
+      label: "בטעינה",
       icon: Clock
     },
-    scraping: { 
+    WAITING_FOR_SCRAPE: { 
+      style: "bg-gray-100 text-gray-500",
+      label: "ממתין לסריקה",
+      icon: Clock
+    },
+    SCRAPING: { 
       style: "bg-blue-50 text-blue-600",
-      label: "סורק תוכן",
+      label: "בסריקת דף",
       icon: Loader2,
       animate: "animate-spin"
     },
-    scraped: { 
+    WAITING_FOR_AI: { 
       style: "bg-indigo-50 text-indigo-600",
-      label: "תוכן נאסף",
-      icon: CheckCircle
+      label: "ממתין לניתוח",
+      icon: Sparkles
     },
-    analyzing: { 
+    ANALYZING: { 
       style: "bg-purple-50 text-purple-600",
-      label: "מנתח AI",
+      label: "ניתוח AI",
       icon: Sparkles,
       animate: "animate-pulse"
     },
-    completed: { 
+    COMPLETED: { 
       style: "bg-emerald-50 text-emerald-600",
-      label: "ניתוח הושלם",
+      label: "הושלם",
       icon: CheckCircle
     },
-    failed: { 
+    FAILED_SCRAPE: { 
       style: "bg-rose-50 text-rose-600",
-      label: "שגיאה בסריקה",
+      label: "שגיאת סריקה",
+      icon: AlertCircle
+    },
+    FAILED_ANALYSIS: { 
+      style: "bg-rose-50 text-rose-600",
+      label: "שגיאת ניתוח",
+      icon: AlertCircle
+    },
+    NO_DATA: { 
+      style: "bg-amber-50 text-amber-600",
+      label: "אין מידע",
       icon: AlertCircle
     },
   };
 
-  const current = config[status] || config.pending;
+  const current = config[status] || config.NEW;
   const Icon = current.icon;
 
   return (
