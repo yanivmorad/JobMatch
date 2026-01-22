@@ -98,3 +98,12 @@ async def manual_update(req: ManualUpdate):
     logger.info(f"✍️ Manual update for: {req.url}")
     await update_manual_job(req.url, req.company, req.title, req.description)
     return {"message": "Job updated and re-queued for AI"}
+
+
+@router.post("/jobs/retry")
+async def retry_endpoint(url: str):
+    """ניסיון סריקה מחדש"""
+    from db.jobs_repository import retry_job
+
+    await retry_job(url)
+    return {"message": "Job queued for retry"}

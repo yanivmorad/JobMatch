@@ -15,14 +15,8 @@ async def add_new_job(
 ) -> bool:
     pool = await get_pool()
     status = "WAITING_FOR_AI" if manual_text else "WAITING_FOR_SCRAPE"
-    company = (
-        manual_meta.get("company", "Identifying...")
-        if manual_meta
-        else "Identifying..."
-    )
-    title = (
-        manual_meta.get("title", "Identifying...") if manual_meta else "Identifying..."
-    )
+    company = manual_meta.get("company", url) if manual_meta else url
+    title = manual_meta.get("title", url) if manual_meta else url
 
     async with pool.acquire() as conn:
         result = await conn.execute(
@@ -137,14 +131,19 @@ async def delete_job_by_url(url: str):
 async def update_user_action(url: str, action: str):
     """מעדכן אם המשתמש הגיש מועמדות או התעלם"""
     pool = await get_pool()
-    # אם המשתמש בחר פעולה שהיא לא 'none', אנחנו מארכבים את המשרה אוטומטית
     is_archived = action != "none"
 
+    # חשוב מאוד: הסדר של המשתנים בתוך ה-execute חייב להתאים ל-$1, $2, $3
     await pool.execute(
-        "UPDATE jobs SET user_action = $2, is_archived = $3 WHERE url = $1",
-        url,
-        action,
-        is_archived,
+        """
+        UPDATE jobs 
+        SET user_action = $1, 
+            is_archived = $2 
+        WHERE url = $3
+        """,
+        action,  # זה יחליף את $1
+        is_archived,  # זה יחליף את $2
+        url,  # זה יחליף את $3
     )
 
 
@@ -158,7 +157,9 @@ async def update_manual_job(url: str, company: str, title: str, description: str
             company = $2,
             job_title = $3,
             full_description = $4,
-            scraped_at = NOW()
+            scraped_at = NOW(),
+            is_archived = FALSE,
+            error_log = NULL
         WHERE url = $1
         """,
         url,
@@ -172,3 +173,29 @@ async def clear_archived_jobs():
     """מוחק את כל המשרות שסומנו כארכיון (כמו הפונקציה הישנה שלך)"""
     pool = await get_pool()
     await pool.execute("DELETE FROM jobs WHERE is_archived = TRUE")
+
+
+async def retry_job(url: str):
+    """מאתחל משרה חזרה לתחילת התור (סריקה) ומנקה שגיאות"""
+    pool = await get_pool()
+    await pool.execute(
+        """
+        UPDATE jobs 
+        SET status = 'WAITING_FOR_SCRAPE', 
+            error_log = NULL,
+            is_archived = FALSE
+        WHERE url = $1
+        """,
+        url,
+    )
+
+
+async def reset_stuck_jobs():
+    """מאפס משרות שנתקעו במצב 'בסריקה' או 'בניתוח' חזרה לתור (למקרה של קריסת שרת)"""
+    pool = await get_pool()
+    await pool.execute(
+        "UPDATE jobs SET status = 'WAITING_FOR_SCRAPE' WHERE status = 'SCRAPING'"
+    )
+    await pool.execute(
+        "UPDATE jobs SET status = 'WAITING_FOR_AI' WHERE status = 'ANALYZING'"
+    )

@@ -7,6 +7,7 @@ from db.jobs_repository import (
     finish_analysis,
     finish_scrape,
     mark_failed,
+    reset_stuck_jobs,
 )
 from services.file_utils import CONTEXT_PATH, RESUME_PATH, read_text_file
 
@@ -75,5 +76,7 @@ async def ai_worker():
 
 async def start_background_workers():
     """פונקציה שתופעל כשהשרת עולה"""
+    logger.info("🧹 Cleaning up stuck jobs from previous run...")
+    await reset_stuck_jobs()
     asyncio.create_task(scrape_worker())
     asyncio.create_task(ai_worker())
