@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { Building2, MapPin, Info, Target, TrendingUp, Calendar } from 'lucide-react';
 import JobModal from './JobModal';
 
-const JobCard = ({ job, onAction, onDelete }) => {
+const JobCard = ({ job, onAction, onDelete, onManualUpdate }) => {
   const [isModalOpen, setIsModalOpen] = React.useState(false);
 
   useEffect(() => {
@@ -31,7 +31,7 @@ const JobCard = ({ job, onAction, onDelete }) => {
         <div className="flex items-start justify-between gap-4 mb-3">
           <div className="flex-1 min-w-0">
             <h3 className="text-lg font-semibold text-slate-800 mb-1 line-clamp-1 group-hover:text-blue-600 transition-colors">
-              {job.job_title}
+              {job.job_title || job.url}
             </h3>
             <div className="flex items-center gap-2 text-slate-600">
               <Building2 className="w-4 h-4 flex-shrink-0" />
@@ -88,7 +88,7 @@ const JobCard = ({ job, onAction, onDelete }) => {
         <JobModal
           job={job}
           onClose={() => setIsModalOpen(false)}
-          onAction={(status) => onAction(job, status)}
+          onAction={onAction}
           onDelete={() => onDelete(job)}
         />
       )}

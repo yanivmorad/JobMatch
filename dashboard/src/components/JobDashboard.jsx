@@ -1,4 +1,3 @@
-// src/components/JobDashboard.jsx
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import Navbar from './Navbar';
@@ -13,7 +12,7 @@ const JobDashboard = () => {
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // --- Fetching Logic ---
+  // --- 1. שליפת נתונים ---
   const fetchJobs = async () => {
     try {
       const response = await axios.get('http://localhost:8000/api/results');
@@ -28,7 +27,7 @@ const JobDashboard = () => {
     fetchJobs();
   }, []);
 
-  // Smart Polling: אם יש משרות בתהליך, תרענן כל 2 שניות
+  // --- 2. Polling (רענון אוטומטי למשרות בתהליך) ---
   useEffect(() => {
     const hasPending = jobs.some(j => 
       ['NEW', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING'].includes(j.status)
@@ -44,81 +43,83 @@ const JobDashboard = () => {
     };
   }, [jobs]);
 
-  // --- Actions ---
-const handleCardAction = (job, action) => {
+  // --- 3. Actions (פונקציות עבודה) ---
+
+  const handleCardAction = async (job, action, manualData = null) => {
     const url = job.url;
     
-    // עדכון אופטימי
+    // עדכון אופטימי לשיפור חווית המשתמש
     setJobs(prev => prev.map(j => j.url === url ? { 
       ...j, 
-      user_action: action, 
-      is_archived: action !== 'none',
+      user_action: action === 'manual_update' ? j.user_action : action, 
+      is_archived: action === 'applied' || action === 'ignored',
+      job_title: manualData?.title || j.job_title,
+      company: manualData?.company || j.company
     } : j));
     
-    // קריאה לשרת
-    axios.post('http://localhost:8000/api/jobs/action', { url, action })
-      .catch(err => {
-        console.error("Failed to update job action", err);
-      });
+    try {
+      if (action === 'manual_update') {
+        await axios.post('http://localhost:8000/api/jobs/manual-update', {
+          url: url,
+          title: manualData.title,
+          company: manualData.company,
+          description: manualData.description
+        });
+      } else {
+        await axios.post('http://localhost:8000/api/jobs/action', { url, action });
+      }
+      
+      await fetchJobs(); // סנכרון סופי מול ה-DB
+      return true;
+    } catch (err) {
+      console.error("Update Failed:", err);
+      alert("העדכון נכשל. וודא שהשרת פועל.");
+      return false;
+    }
   };
 
   const handleDeleteJob = async (job) => {
+    if (!window.confirm('למחוק את המשרה לצמיתות?')) return;
     try {
       await axios.delete('http://localhost:8000/api/jobs', { params: { url: job.url } });
       setJobs(prev => prev.filter(j => j.url !== job.url));
     } catch (err) {
-      console.error("Failed to delete job", err);
+      console.error("Delete Failed", err);
     }
   };
 
-  // 1. ממתינים ובתהליך
+  // --- 4. פילטורים ---
   const pendingJobs = jobs.filter(j =>
     ['NEW', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING', 'FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA'].includes(j.status)
   );
 
-  // 2. משרות פעילות (הצעות שעוד לא עשית איתן כלום)
-  // הן COMPLETED או FAILED (כדי שנוכל לתקן ידנית), לא בארכיון, ואין להן פעולת משתמש מוגדרת
   const activeJobs = jobs
     .filter(j => 
-      (j.status === 'COMPLETED' || ['FAILED_SCRAPE', 'NO_DATA'].includes(j.status)) 
-      && !j.is_archived
+      !j.is_archived && 
+      (j.status === 'COMPLETED' || ['FAILED_SCRAPE', 'NO_DATA', 'WAITING_FOR_AI', 'ANALYZING'].includes(j.status))
     )
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
-  // 3. משרות שנשלחו
   const appliedJobs = jobs
     .filter(j => j.user_action === 'applied')
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
-  // 4. היסטוריה / ארכיון
   const historyJobs = jobs
     .filter(j => j.is_archived && j.user_action !== 'applied')
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
-
-return (
-    <div className="min-h-screen bg-slate-50 flex flex-col" dir="rtl">
-      
-      {/* נאובר קבוע למעלה */}
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col">
       <div className="w-full bg-white shadow-sm sticky top-0 z-50">
         <Navbar 
           activeTab={activeTab} 
           setActiveTab={setActiveTab} 
-          counts={{ 
-            active: activeJobs.length, 
-            pending: pendingJobs.length,
-            applied: appliedJobs.length 
-          }}
+          counts={{ active: activeJobs.length, pending: pendingJobs.length, applied: appliedJobs.length }}
         />
       </div>
 
-      {/* Main Content Area */}
       <main className="flex-1 w-full flex justify-center bg-slate-50/50">
-        
-        {/* קונטיינר מרכזי עם מרווחים משופרים מהצדדים */}
-        <div className="w-full max-w-7xl mx-auto px-6 md:px-12 lg:px-16 py-8 flex flex-col">
-          
-          {/* תוכן הטאבים - ללא כותרת מעל, הכל נקי וממורכז */}
+        <div className="w-full max-w-[90%] mx-auto px-4 py-8 flex flex-col">          
           <div className="w-full transition-all duration-500 ease-in-out"> 
             {activeTab === 'dashboard' && (
               <ActiveJobsTab 
@@ -131,33 +132,19 @@ return (
             )}
             
             {activeTab === 'add' && (
-              <AddJobsTab 
-                pendingJobs={pendingJobs} 
-                onJobAdded={fetchJobs} 
-              />
+              <AddJobsTab pendingJobs={pendingJobs} onJobAdded={fetchJobs} />
             )}
 
             {activeTab === 'applied' && (
-              <AppliedJobsTab 
-                jobs={appliedJobs} 
-                onRemove={handleCardAction} 
-                onRefresh={fetchJobs} 
-              />
+              <AppliedJobsTab jobs={appliedJobs} onRemove={handleCardAction} onRefresh={fetchJobs} />
             )}
 
             {activeTab === 'history' && (
-              <HistoryTab 
-                jobs={historyJobs} 
-                onRefresh={fetchJobs} 
-                onRestore={handleCardAction} 
-              />
+              <HistoryTab jobs={historyJobs} onRefresh={fetchJobs} onRestore={handleCardAction} />
             )}
 
-            {activeTab === 'profile' && (
-              <ProfileTab />
-            )}
+            {activeTab === 'profile' && <ProfileTab />}
           </div>
-
         </div>
       </main>
     </div>

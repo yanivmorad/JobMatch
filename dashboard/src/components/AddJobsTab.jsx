@@ -1,17 +1,119 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
-import { Link as LinkIcon, X, Send, Loader2, FileText, CheckCircle, Sparkles, Zap, ArrowLeft, Clock } from 'lucide-react';
-import StatusBadge from './StatusBadge';
+import { 
+  Link as LinkIcon, Send, Loader2, FileText, 
+  CheckCircle, Sparkles, AlertCircle, 
+  RefreshCw, Trash2, Edit3, ExternalLink, X, Brain, Search, Clock
+} from 'lucide-react';
+
+// --- קומפוננטת Modal לתיקון ידני ---
+const ManualFixModal = ({ isOpen, onClose, job, onSubmit, isSubmitting }) => {
+  const [content, setContent] = useState('');
+  const [title, setTitle] = useState('');
+
+  useEffect(() => {
+    if (isOpen && job) {
+      setTitle(job.company !== 'Unknown' ? job.company : '');
+      setContent('');
+    }
+  }, [isOpen, job]);
+
+  if (!isOpen || !job) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-[2rem] w-full max-w-2xl shadow-2xl border border-slate-100 flex flex-col max-h-[90vh] overflow-hidden animate-in zoom-in-95 duration-200">
+        
+        {/* Header */}
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+          <div>
+            <h3 className="text-xl font-bold text-slate-800">תיקון משרה ידני</h3>
+            <div className="flex items-center gap-2 mt-1">
+                <span className="text-xs text-slate-400 font-mono bg-white px-2 py-1 rounded border border-slate-200 truncate max-w-[300px]">
+                  {job.url}
+                </span>
+                <a 
+                  href={job.url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-blue-500 hover:text-blue-700 hover:underline text-xs flex items-center gap-1"
+                >
+                  פתח קישור <ExternalLink size={10} />
+                </a>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-500">
+            <X size={24} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 overflow-y-auto flex-1 flex flex-col gap-4">
+          <div className="bg-blue-50 text-blue-800 text-sm p-4 rounded-xl flex items-start gap-3">
+             <Sparkles className="shrink-0 mt-0.5" size={16} />
+             <p>הסורק האוטומטי נכשל. העתק את הטקסט מהאתר והדבק אותו כאן - המערכת תדלג על הסריקה ותעבור ישירות לניתוח AI, אך תשמור את הקישור המקורי.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-bold text-slate-700 mb-2">כותרת / שם חברה</label>
+            <input 
+              type="text" 
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
+              placeholder="לדוגמה: מפתח Full Stack בחברת X"
+            />
+          </div>
+
+          <div className="flex-1">
+            <label className="block text-sm font-bold text-slate-700 mb-2">תוכן המשרה (הדבק כאן)</label>
+            <textarea 
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              className="w-full h-48 bg-slate-50 border border-slate-200 rounded-xl p-4 resize-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm leading-relaxed"
+              placeholder="תיאור המשרה, דרישות, וכל מידע רלוונטי..."
+            />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-3">
+          <button 
+            onClick={onClose}
+            className="px-6 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-200 transition-colors"
+          >
+            ביטול
+          </button>
+          <button 
+            onClick={() => onSubmit(job.url, title, content)}
+            disabled={!content.trim() || isSubmitting}
+            className="px-8 py-3 rounded-xl font-bold bg-blue-600 text-white shadow-lg shadow-blue-200 hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-50 flex items-center gap-2"
+          >
+            {isSubmitting ? <Loader2 className="animate-spin" size={20} /> : <CheckCircle size={20} />}
+            שמור ונתח מחדש
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
   const [rawInput, setRawInput] = useState('');
   const [parsedLinks, setParsedLinks] = useState([]);
   const [submitStatus, setSubmitStatus] = useState(null); 
   const [localJobs, setLocalJobs] = useState([]);
+  
+  // States for general manual text input
   const [textInput, setTextInput] = useState('');
   const [textTitle, setTextTitle] = useState('');
 
-  // --- לוגיקה (ללא שינוי) ---
+  // States for the Modal
+  const [isFixModalOpen, setIsFixModalOpen] = useState(false);
+  const [jobToFix, setJobToFix] = useState(null);
+
+  // --- לוגיקה ---
   useEffect(() => {
     if (!rawInput) {
       setParsedLinks([]);
@@ -32,15 +134,6 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
 
   const handleUrlSubmit = async () => {
     if (parsedLinks.length === 0) return;
-    
-    const newOptimisticJobs = parsedLinks.map(url => ({
-      url,
-      company: 'בטעינה...',
-      status: 'NEW',
-      isLocal: true
-    }));
-    setLocalJobs(prev => [...prev, ...newOptimisticJobs]);
-
     setSubmitStatus('sending');
     try {
       await axios.post('http://localhost:8000/api/jobs/url', { urls: parsedLinks });
@@ -49,28 +142,45 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
       setSubmitStatus('success');
       setTimeout(() => setSubmitStatus(null), 3000);
       onJobAdded(); 
-      setTimeout(() => onJobAdded(), 2000); 
     } catch (e) {
       setSubmitStatus('error');
-      setTimeout(() => setSubmitStatus(null), 3000);
     }
   };
 
-  const handleTextSubmit = async () => {
-    if (!textInput.trim()) return;
+  // עדכנתי את הפונקציה לקבל גם originalUrl
+  const handleTextSubmit = async (text, title, originalUrl = null) => {
+    if (!text.trim()) return;
     setSubmitStatus('sending');
     try {
       await axios.post('http://localhost:8000/api/jobs/text', {
-        text: textInput,
-        title: textTitle || 'משרה ידנית'
+        text: text,
+        title: title || 'משרה ידנית',
+        url: originalUrl // שולחים את ה-URL המקורי אם קיים
       });
-      setTextInput('');
-      setTextTitle('');
+
+      if (!isFixModalOpen) {
+        setTextInput('');
+        setTextTitle('');
+      }
       setSubmitStatus('success');
       setTimeout(() => setSubmitStatus(null), 3000);
       onJobAdded();
+      return true;
     } catch (e) {
       setSubmitStatus('error');
+      return false;
+    }
+  };
+
+  const handleFixSubmit = async (originalUrl, title, content) => {
+    // כאן הקסם קורה: שולחים לניתוח טקסט (מדלג על סריקה) אבל עם ה-URL המקורי
+    const success = await handleTextSubmit(content, title, originalUrl);
+    
+    if (success) {
+      // מוחקים את הג'וב המקורי שנכשל
+      await handleCancel(originalUrl);
+      setIsFixModalOpen(false);
+      setJobToFix(null);
     }
   };
 
@@ -83,216 +193,332 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
     }
   };
 
-  const removeLink = (linkToRemove) => {
-    setParsedLinks(parsedLinks.filter(l => l !== linkToRemove));
+  const handleRetry = async (url) => {
+    try {
+      await axios.post(`http://localhost:8000/api/jobs/retry`, null, { params: { url } });
+      onJobAdded();
+    } catch (err) {
+      console.error("Failed to retry job", err);
+    }
   };
 
-  const displayQueue = useMemo(() => {
+  // --- קונפיגורציה לסטטוסים ---
+  const getStatusConfig = (status) => {
+    // התאם את המפתחות (cases) למה שהשרת שלך מחזיר בפועל
+    switch (status) {
+      case 'PENDING': 
+      case 'WAITING':
+        return { 
+          text: 'ממתינה לסריקה', 
+          bg: 'bg-slate-100', 
+          textCol: 'text-slate-600', 
+          icon: <Clock size={14} />,
+          borderColor: 'border-slate-200'
+        };
+      case 'SCRAPING': 
+      case 'SCANNING':
+        return { 
+          text: 'בסריקה', 
+          bg: 'bg-blue-100', 
+          textCol: 'text-blue-700', 
+          icon: <Search size={14} className="animate-pulse" />,
+          borderColor: 'border-blue-200'
+        };
+      case 'AI_PENDING':
+      case 'ANALYSIS_PENDING':
+        return { 
+          text: 'ממתינה לניתוח AI', 
+          bg: 'bg-purple-100', 
+          textCol: 'text-purple-700', 
+          icon: <Sparkles size={14} />,
+          borderColor: 'border-purple-200'
+        };
+      case 'ANALYZING': 
+      case 'AI_PROCESSING':
+        return { 
+          text: 'בניתוח AI', 
+          bg: 'bg-indigo-100', 
+          textCol: 'text-indigo-700', 
+          icon: <Brain size={14} className="animate-pulse" />,
+          borderColor: 'border-indigo-200'
+        };
+      default:
+        return { 
+          text: 'בעיבוד...', 
+          bg: 'bg-gray-100', 
+          textCol: 'text-gray-600', 
+          icon: <Loader2 size={14} className="animate-spin" />,
+          borderColor: 'border-gray-200'
+        };
+    }
+  };
+
+  const { activeQueue, failedJobs } = useMemo(() => {
     const serverUrlSet = new Set(pendingJobs.map(j => j.url));
     const uniqueLocalJobs = localJobs.filter(j => !serverUrlSet.has(j.url));
-    // מסננים החוצה שגיאות מהתור - הן עוברות לדאשבורד הראשי
-    const activeQueue = [...pendingJobs, ...uniqueLocalJobs].filter(j => 
-        !['FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA'].includes(j.status)
-    );
-    return activeQueue;
+    const all = [...pendingJobs, ...uniqueLocalJobs];
+    
+    return {
+      activeQueue: all.filter(j => !['FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA'].includes(j.status)),
+      failedJobs: all.filter(j => ['FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA'].includes(j.status))
+    };
   }, [pendingJobs, localJobs]);
 
-  // --- UI מתוקן ובהיר ---
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 min-h-[700px] text-slate-800 pb-10">
+    <div className="w-full min-h-screen bg-slate-50/50" dir="rtl">
       
-      {/* צד ימין: אזור ההזנה (רחב יותר) */}
-      <div className="xl:col-span-8 flex flex-col gap-8">
+      {/* Modal Integration */}
+      <ManualFixModal 
+        isOpen={isFixModalOpen}
+        onClose={() => setIsFixModalOpen(false)}
+        job={jobToFix}
+        onSubmit={handleFixSubmit}
+        isSubmitting={submitStatus === 'sending'}
+      />
+
+      <div className="max-w-[1600px] mx-auto w-full px-6 sm:px-10 py-10 flex flex-col gap-10 text-slate-800">
         
-        {/* כרטיס סריקת קישורים */}
-        <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden relative group hover:shadow-md transition-all duration-300">
-          <div className="absolute top-0 right-0 w-1.5 h-full bg-blue-500"></div>
+        {/* כותרת הדף */}
+        <section className="flex flex-col gap-2 border-b border-slate-200 pb-6">
+          <h2 className="text-4xl font-black text-slate-900 tracking-tight">הוספת משרות</h2>
+          <p className="text-slate-500 text-lg">ניהול מקורות מידע, לינקים וטקסטים חופשיים לעיבוד AI</p>
+        </section>
+
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-10 items-start">
           
-          <div className="p-8">
-            <div className="flex items-center gap-4 mb-6">
-              <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600">
-                <LinkIcon className="w-6 h-6" />
+          {/* עמודה מרכזית - אזורי הזנה */}
+          <div className="xl:col-span-8 flex flex-col gap-10">
+            
+            {/* כרטיס הזנה ראשי */}
+            <div className="bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/50 p-8 relative overflow-hidden group transition-all hover:shadow-2xl hover:shadow-blue-500/5">
+              <div className="absolute top-0 right-0 w-1.5 h-full bg-gradient-to-b from-blue-500 to-indigo-600"></div>
+              
+              <div className="flex items-center gap-4 mb-6">
+                 <div className="bg-blue-50 p-3 rounded-2xl text-blue-600">
+                    <LinkIcon size={24} strokeWidth={2.5} />
+                 </div>
+                 <div>
+                    <h3 className="text-xl font-bold text-slate-900">ייבוא לינקים מהיר</h3>
+                    <p className="text-slate-400 text-sm">הדבק כאן רשימת לינקים (LinkedIn, Glassdoor וכד')</p>
+                 </div>
               </div>
-              <div>
-                <h3 className="font-bold text-2xl text-slate-900">סריקה מהירה</h3>
-                <p className="text-slate-500 text-sm">הדבק תוכן חופשי לחילוץ קישורים</p>
+
+              <textarea 
+                value={rawInput}
+                onChange={(e) => setRawInput(e.target.value)}
+                className="w-full h-40 bg-slate-50 border border-slate-100 rounded-2xl p-6 text-lg placeholder:text-slate-400 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/50 transition-all resize-none mb-6 outline-none"
+                placeholder="https://www.linkedin.com/jobs/..."
+              />
+
+              <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+                <div className="flex gap-4 text-slate-400 text-sm font-medium bg-slate-50 px-4 py-2 rounded-xl">
+                  <span className="flex items-center gap-2"><Sparkles size={14} className="text-blue-500"/> {parsedLinks.length} לינקים זוהו</span>
+                </div>
+                
+                <button 
+                  onClick={handleUrlSubmit}
+                  disabled={parsedLinks.length === 0 || submitStatus === 'sending'}
+                  className={`flex items-center gap-3 py-3.5 px-8 rounded-xl font-bold transition-all active:scale-95
+                    ${parsedLinks.length > 0 
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 hover:bg-blue-700 hover:-translate-y-0.5' 
+                      : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                >
+                  {submitStatus === 'sending' ? <Loader2 className="animate-spin" /> : <Send size={18} />}
+                  הוסף לתור העיבוד
+                </button>
               </div>
             </div>
 
-            <div className="flex flex-col lg:flex-row gap-6">
-              <textarea
-                value={rawInput}
-                onChange={(e) => setRawInput(e.target.value)}
-                className="flex-1 h-[200px] lg:h-auto p-5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:bg-white transition-all text-sm outline-none resize-none"
-                placeholder="הדבק כאן הודעות וואטסאפ, מיילים או רשימת קישורים..."
+            {/* כרטיס הזנה ידנית כללית */}
+            <div className="bg-white rounded-[2rem] border border-slate-100 shadow-lg shadow-slate-200/50 p-8 relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-1.5 h-full bg-gradient-to-b from-purple-500 to-fuchsia-600"></div>
+              
+              <div className="flex items-center gap-4 mb-6">
+                <div className="bg-purple-50 p-3 rounded-2xl text-purple-600">
+                  <FileText size={24} strokeWidth={2.5} />
+                </div>
+                <div>
+                   <h3 className="text-xl font-bold text-slate-900">ניתוח טקסט חופשי</h3>
+                   <p className="text-slate-400 text-sm">העתק-הדבק לתיאור משרה מלא מוואטסאפ או מייל</p>
+                </div>
+              </div>
+
+              <div className="flex gap-4 mb-4">
+                <input 
+                  type="text"
+                  value={textTitle}
+                  onChange={e => setTextTitle(e.target.value)}
+                  placeholder="שם החברה / כותרת (אופציונלי)"
+                  className="w-full bg-slate-50 border border-slate-100 rounded-xl px-5 py-3 focus:bg-white focus:ring-4 focus:ring-purple-500/10 focus:border-purple-500/50 outline-none transition-all"
+                />
+              </div>
+              
+              <textarea 
+                value={textInput}
+                onChange={e => setTextInput(e.target.value)}
+                className="w-full h-32 bg-slate-50 border border-slate-100 rounded-xl p-5 text-sm focus:bg-white focus:ring-4 focus:ring-purple-500/10 focus:border-purple-500/50 transition-all resize-none outline-none mb-4"
+                placeholder="הדבק את תוכן המשרה כאן..."
               />
 
-              <div className="lg:w-72 flex flex-col gap-3">
-                <div className="flex-1 bg-slate-50 rounded-2xl border border-slate-100 p-3 overflow-y-auto max-h-[180px] custom-scrollbar">
-                    {parsedLinks.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-2 opacity-60">
-                            <Sparkles className="w-6 h-6" />
-                            <span className="text-[10px] font-bold uppercase">אין קישורים</span>
-                        </div>
-                    ) : (
-                        <div className="space-y-2">
-                            {parsedLinks.map((link, i) => (
-                                <div key={i} className="flex items-center justify-between bg-white p-2 rounded-xl border border-slate-100 shadow-sm text-xs">
-                                    <span className="truncate w-40 font-medium text-slate-600">{link}</span>
-                                    <button onClick={() => removeLink(link)} className="text-slate-300 hover:text-rose-500"><X className="w-3 h-3"/></button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-                <button
-                  onClick={handleUrlSubmit}
-                  disabled={parsedLinks.length === 0 || submitStatus === 'sending'}
-                  className={`py-3 rounded-xl font-bold text-sm shadow-sm active:scale-95 transition-all flex justify-center items-center gap-2
-                    ${parsedLinks.length > 0 
-                        ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200' 
-                        : 'bg-slate-100 text-slate-400 cursor-not-allowed'}
-                  `}
+              <div className="flex justify-end">
+                <button 
+                  onClick={() => handleTextSubmit(textInput, textTitle)}
+                  disabled={!textInput.trim() || submitStatus === 'sending'}
+                  className="bg-purple-600 text-white px-8 py-3 rounded-xl font-bold text-sm hover:bg-purple-700 hover:-translate-y-0.5 shadow-lg shadow-purple-200 transition-all disabled:opacity-50 disabled:hover:translate-y-0"
                 >
-                  {submitStatus === 'sending' ? <Loader2 className="animate-spin w-4 h-4" /> : <Send className="w-4 h-4" />}
-                  <span>סרוק {parsedLinks.length} משרות</span>
+                   {submitStatus === 'sending' ? <Loader2 className="animate-spin" /> : 'נתח טקסט'}
                 </button>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* כרטיס ניתוח טקסט ידני - מוגדל ומרווח */}
-        <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 p-8 hover:shadow-md transition-all duration-300">
-            <div className="flex items-center gap-4 mb-6 border-b border-slate-50 pb-4">
-                <div className="w-12 h-12 bg-purple-50 rounded-2xl flex items-center justify-center text-purple-600">
-                    <FileText className="w-6 h-6" />
-                </div>
-                <div>
-                    <h3 className="font-bold text-2xl text-slate-900">הזנת משרה ידנית</h3>
-                    <p className="text-slate-500 text-sm">הדבק כאן את תיאור המשרה המלא לניתוח</p>
-                </div>
-            </div>
+          {/* עמודת צד - סטטוסים */}
+          <aside className="xl:col-span-4 flex flex-col gap-8 sticky top-8">
             
-            <div className="space-y-6">
-                <div className="flex flex-col md:flex-row gap-4">
-                    <div className="flex-1">
-                        <label className="text-xs font-bold text-slate-400 mb-1.5 block pr-1">שם חברה / כותרת</label>
-                        <input
-                            type="text"
-                            className="w-full h-12 px-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 focus:bg-white outline-none transition-all"
-                            placeholder="למשל: Google - Full Stack Developer"
-                            value={textTitle}
-                            onChange={e => setTextTitle(e.target.value)}
-                        />
-                    </div>
-                    <div className="flex items-end">
-                         <button
-                            onClick={handleTextSubmit}
-                            disabled={!textInput.trim() || submitStatus === 'sending'}
-                            className={`h-12 px-8 rounded-xl font-bold text-sm transition-all flex items-center gap-2 shadow-sm whitespace-nowrap
-                                ${textInput.trim() 
-                                    ? 'bg-purple-600 hover:bg-purple-700 text-white shadow-purple-200 active:scale-95' 
-                                    : 'bg-slate-100 text-slate-400 cursor-not-allowed'}
-                            `}
-                        >
-                            {submitStatus === 'sending' ? <Loader2 className="animate-spin w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
-                            <span>נתח טקסט</span>
-                        </button>
-                    </div>
-                </div>
+            {/* שגיאות / נדרשת פעולה */}
+            <div className="flex flex-col gap-4">
+               <div className="flex items-center justify-between px-1">
+                 <h3 className="text-lg font-bold text-slate-700 flex items-center gap-2">
+                   <AlertCircle size={20} className="text-rose-500" />
+                   נדרשת תשומת לב
+                 </h3>
+                 {failedJobs.length > 0 && 
+                   <span className="bg-rose-100 text-rose-600 text-xs font-black px-2.5 py-1 rounded-full">
+                     {failedJobs.length}
+                   </span>
+                 }
+               </div>
 
-                <div className="relative">
-                     <label className="text-xs font-bold text-slate-400 mb-1.5 block pr-1">תיאור משרה מלא (הדבק כאן פסקה)</label>
-                     <textarea
-                        value={textInput}
-                        onChange={(e) => setTextInput(e.target.value)}
-                        className="w-full h-[300px] p-6 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 focus:bg-white transition-all text-sm leading-relaxed outline-none resize-none font-medium text-slate-700"
-                        placeholder="הדבק כאן את כל הטקסט של המשרה...
-דרישות, תחומי אחריות, וכל פרט אחר.
-המערכת תדע לסנן ולנתח את זה."
-                    />
-                    <div className="absolute bottom-4 left-4">
-                        <span className="text-[10px] font-bold text-slate-400 bg-white/80 px-2 py-1 rounded-md border border-slate-100">
-                           {textInput.length} תווים
-                        </span>
-                    </div>
-                </div>
-            </div>
-        </div>
-      </div>
-
-      {/* צד שמאל: Live Queue - מתוקן לבהיר */}
-      <div className="xl:col-span-4">
-        <div className="bg-white rounded-[2rem] h-full shadow-lg shadow-slate-200/50 border border-slate-100 flex flex-col overflow-hidden">
-            
-            {/* כותרת בהירה */}
-            <div className="p-6 pb-4 border-b border-slate-50 bg-slate-50/50">
-                <div className="flex items-center justify-between">
-                    <div>
-                        <h3 className="font-black text-lg text-slate-800 flex items-center gap-2">
-                            <Clock className="w-5 h-5 text-blue-500" />
-                            תור עבודה
-                        </h3>
-                        <p className="text-slate-400 text-xs font-medium mt-0.5">סטטוס משימות בזמן אמת</p>
-                    </div>
-                    <span className="bg-white px-3 py-1 rounded-full text-xs font-bold border border-slate-200 text-slate-600 shadow-sm">
-                        {displayQueue.length}
-                    </span>
-                </div>
-            </div>
-
-            {/* רשימה בהירה */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/30 custom-scrollbar">
-                {displayQueue.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
-                        <div className="w-16 h-16 bg-slate-50 rounded-full border border-slate-200 flex items-center justify-center">
-                            <CheckCircle className="w-8 h-8 opacity-20 text-slate-400" />
+               {failedJobs.length === 0 ? (
+                 <div className="bg-emerald-50/50 border border-emerald-100/50 rounded-3xl p-6 text-center py-10">
+                   <div className="size-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-3 shadow-sm">
+                     <CheckCircle size={28} />
+                   </div>
+                   <p className="text-emerald-900 font-bold">הכל תקין!</p>
+                   <p className="text-emerald-700/60 text-xs mt-1">אין משימות שנכשלו</p>
+                 </div>
+               ) : (
+                 <div className="flex flex-col gap-3">
+                   {failedJobs.map((job, idx) => (
+                     <div key={idx} className="bg-white border border-rose-100 shadow-sm rounded-2xl p-5 flex flex-col gap-4 relative overflow-hidden group hover:shadow-md transition-all">
+                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-rose-400"></div>
+                        
+                        <div className="flex justify-between items-start gap-3">
+                           <div>
+                              <div className="flex items-center gap-2 text-rose-600 text-xs font-bold uppercase tracking-wider mb-1">
+                                <AlertCircle size={12} /> נכשל בסריקה
+                              </div>
+                              <a 
+                                href={job.url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-slate-800 font-bold text-sm leading-tight hover:text-blue-600 hover:underline decoration-2 flex items-center gap-1 group-link"
+                              >
+                                {job.company !== 'Unknown' ? job.company : 'קישור לא מזוהה'}
+                                <ExternalLink size={12} className="opacity-0 group-hover/link:opacity-100 transition-opacity" />
+                              </a>
+                              <p className="text-slate-400 text-xs mt-1 truncate max-w-[200px]" dir="ltr">{job.url}</p>
+                           </div>
                         </div>
-                        <p className="text-xs font-bold uppercase tracking-widest opacity-50">הכל נקי</p>
-                    </div>
-                ) : (
-                    displayQueue.map((job, idx) => (
-                        <div key={job.url + idx} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
-                            {/* פס סטטוס צדדי */}
-                            <div className={`absolute right-0 top-0 bottom-0 w-1 bg-blue-500`}></div>
-
-                            <div className="flex justify-between items-start mb-3 pr-2">
-                                <div className="w-[60%]">
-                                    <h4 className="font-bold text-slate-800 truncate text-sm">
-                                        {job.company && job.company !== "Unknown" ? job.company : (job.isLocal ? "מעבד..." : "מזהה חברה...")}
-                                    </h4>
-                                    <p className="text-[10px] text-slate-400 truncate mt-0.5">{job.url.replace(/^https?:\/\//, '')}</p>
-                                </div>
-                                <div className="flex flex-col items-end gap-2">
-                                    <StatusBadge status={job.status} />
-                                    {!job.isLocal && (
-                                        <button 
-                                            onClick={() => handleCancel(job.url)}
-                                            className="text-slate-300 hover:text-rose-500 transition-colors p-1"
-                                            title="ביטול ומחיקה"
-                                        >
-                                            <X size={14} />
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                            
-                            {/* Progress Bar בהיר */}
-                            <div className="pr-2">
-                                <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-                                    <div className={`h-full rounded-full transition-all duration-1000 ease-out ${
-                                        job.status === 'COMPLETED' ? 'bg-emerald-500 w-full' :
-                                        job.status === 'ANALYZING' ? 'bg-purple-500 w-3/4' :
-                                        ['WAITING_FOR_AI', 'SCRAPING'].includes(job.status) ? 'bg-blue-500 w-1/2' : 
-                                        'bg-blue-400 w-1/4 animate-pulse'
-                                    }`}></div>
-                                </div>
-                            </div>
+                        
+                        <div className="flex gap-2 mt-1">
+                          <button 
+                            onClick={() => {
+                              setJobToFix(job);
+                              setIsFixModalOpen(true);
+                            }}
+                            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg bg-rose-50 text-rose-700 text-xs font-bold hover:bg-rose-100 transition-colors"
+                          >
+                            <Edit3 size={14} /> תיקון ידני
+                          </button>
+                          <button 
+                            onClick={() => handleRetry(job.url)}
+                            className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
+                            title="נסה שוב"
+                          >
+                            <RefreshCw size={14} />
+                          </button>
+                          <button 
+                            onClick={() => handleCancel(job.url)}
+                            className="px-3 py-2.5 rounded-lg bg-slate-50 text-slate-400 hover:bg-rose-100 hover:text-rose-600 transition-colors"
+                            title="מחק מהרשימה"
+                          >
+                            <Trash2 size={16} />
+                          </button>
                         </div>
-                    ))
-                )}
+                     </div>
+                   ))}
+                 </div>
+               )}
             </div>
+
+            {/* תור פעיל - מעוצב מחדש לפי בקשתך */}
+            <div className="flex flex-col gap-4 pt-6 border-t border-slate-200">
+              <div className="flex items-center justify-between px-1">
+                <h3 className="text-lg font-bold text-slate-700 flex items-center gap-2">
+                  <RefreshCw size={20} className="text-blue-500" />
+                  מעובד כעת
+                </h3>
+                <span className="bg-slate-100 text-slate-600 text-xs font-black px-2.5 py-1 rounded-full">
+                  {activeQueue.length}
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                 {activeQueue.length === 0 ? (
+                   <p className="text-slate-400 text-sm text-center py-4 italic">אין משימות בתור</p>
+                 ) : (
+                   activeQueue.map((job, idx) => {
+                     // שליפת הקונפיגורציה לסטטוס הנוכחי
+                     const statusConfig = getStatusConfig(job.status);
+                     
+                     return (
+                       <div key={idx} className={`bg-white rounded-xl border shadow-sm overflow-hidden flex flex-col ${statusConfig.borderColor}`}>
+                         
+                         {/* Status Header - כותרת ברורה מעל כל משרה */}
+                         <div className={`${statusConfig.bg} ${statusConfig.textCol} px-4 py-2 text-xs font-bold flex items-center gap-2 border-b ${statusConfig.borderColor}`}>
+                           {statusConfig.icon}
+                           {statusConfig.text}
+                         </div>
+                         
+                         {/* Content */}
+                         <div className="p-4 flex justify-between items-center gap-3">
+                           <div className="min-w-0">
+                             <h4 className="font-bold text-slate-800 text-sm mb-1 truncate">
+                               {job.company !== "Unknown" ? job.company : (job.job_title || "מנתח נתונים...")}
+                             </h4>
+                             
+                             {/* הצגת הקישור אם קיים */}
+                             {job.url && (
+                               <a 
+                                 href={job.url}
+                                 target="_blank"
+                                 rel="noopener noreferrer"
+                                 className="text-xs text-slate-400 hover:text-blue-500 hover:underline truncate block flex items-center gap-1 mt-2"
+                                 dir="ltr"
+                               >
+                                 <LinkIcon size={10} />
+                                 {job.url}
+                               </a>
+                             )}
+                           </div>
+
+                           <button 
+                             onClick={() => handleRetry(job.url)}
+                             className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-blue-500 transition-all shrink-0"
+                             title="אתחל משרה"
+                           >
+                             <RefreshCw size={16} />
+                           </button>
+                         </div>
+                       </div>
+                     );
+                   })
+                 )}
+              </div>
+            </div>
+
+          </aside>
         </div>
       </div>
     </div>

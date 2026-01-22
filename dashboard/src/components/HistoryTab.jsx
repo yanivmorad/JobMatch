@@ -183,10 +183,7 @@ const HistoryTab = ({ jobs, onRefresh, onRestore }) => {
         <JobModal
           job={selectedJob}
           onClose={() => setSelectedJob(null)}
-          onAction={(action) => {
-            onRestore(selectedJob, action);
-            setSelectedJob(null);
-          }}
+          onAction={onRestore}
         />
       )}
     </div>

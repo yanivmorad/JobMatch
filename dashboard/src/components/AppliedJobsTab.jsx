@@ -214,10 +214,7 @@ const AppliedJobsTab = ({ jobs, onRemove }) => {
         <JobModal
           job={selectedJob}
           onClose={() => setSelectedJob(null)}
-          onAction={(action) => {
-            onRemove(selectedJob, action);
-            setSelectedJob(null);
-          }}
+          onAction={onRemove}
         />
       )}
     </div>
