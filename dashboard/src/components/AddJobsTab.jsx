@@ -5,6 +5,8 @@ import {
   CheckCircle, Sparkles, AlertCircle, 
   RefreshCw, Trash2, Edit3, ExternalLink, X, Brain, Search, Clock
 } from 'lucide-react';
+import { ActiveQueueList } from './ActiveQueueList';
+
 
 // --- קומפוננטת Modal לתיקון ידני ---
 const ManualFixModal = ({ isOpen, onClose, job, onSubmit, isSubmitting }) => {
@@ -202,56 +204,6 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
     }
   };
 
-  // --- קונפיגורציה לסטטוסים ---
-  const getStatusConfig = (status) => {
-    // התאם את המפתחות (cases) למה שהשרת שלך מחזיר בפועל
-    switch (status) {
-      case 'PENDING': 
-      case 'WAITING':
-        return { 
-          text: 'ממתינה לסריקה', 
-          bg: 'bg-slate-100', 
-          textCol: 'text-slate-600', 
-          icon: <Clock size={14} />,
-          borderColor: 'border-slate-200'
-        };
-      case 'SCRAPING': 
-      case 'SCANNING':
-        return { 
-          text: 'בסריקה', 
-          bg: 'bg-blue-100', 
-          textCol: 'text-blue-700', 
-          icon: <Search size={14} className="animate-pulse" />,
-          borderColor: 'border-blue-200'
-        };
-      case 'AI_PENDING':
-      case 'ANALYSIS_PENDING':
-        return { 
-          text: 'ממתינה לניתוח AI', 
-          bg: 'bg-purple-100', 
-          textCol: 'text-purple-700', 
-          icon: <Sparkles size={14} />,
-          borderColor: 'border-purple-200'
-        };
-      case 'ANALYZING': 
-      case 'AI_PROCESSING':
-        return { 
-          text: 'בניתוח AI', 
-          bg: 'bg-indigo-100', 
-          textCol: 'text-indigo-700', 
-          icon: <Brain size={14} className="animate-pulse" />,
-          borderColor: 'border-indigo-200'
-        };
-      default:
-        return { 
-          text: 'בעיבוד...', 
-          bg: 'bg-gray-100', 
-          textCol: 'text-gray-600', 
-          icon: <Loader2 size={14} className="animate-spin" />,
-          borderColor: 'border-gray-200'
-        };
-    }
-  };
 
   const { activeQueue, failedJobs } = useMemo(() => {
     const serverUrlSet = new Set(pendingJobs.map(j => j.url));
@@ -464,58 +416,7 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
                 </span>
               </div>
 
-              <div className="flex flex-col gap-3">
-                 {activeQueue.length === 0 ? (
-                   <p className="text-slate-400 text-sm text-center py-4 italic">אין משימות בתור</p>
-                 ) : (
-                   activeQueue.map((job, idx) => {
-                     // שליפת הקונפיגורציה לסטטוס הנוכחי
-                     const statusConfig = getStatusConfig(job.status);
-                     
-                     return (
-                       <div key={idx} className={`bg-white rounded-xl border shadow-sm overflow-hidden flex flex-col ${statusConfig.borderColor}`}>
-                         
-                         {/* Status Header - כותרת ברורה מעל כל משרה */}
-                         <div className={`${statusConfig.bg} ${statusConfig.textCol} px-4 py-2 text-xs font-bold flex items-center gap-2 border-b ${statusConfig.borderColor}`}>
-                           {statusConfig.icon}
-                           {statusConfig.text}
-                         </div>
-                         
-                         {/* Content */}
-                         <div className="p-4 flex justify-between items-center gap-3">
-                           <div className="min-w-0">
-                             <h4 className="font-bold text-slate-800 text-sm mb-1 truncate">
-                               {job.company !== "Unknown" ? job.company : (job.job_title || "מנתח נתונים...")}
-                             </h4>
-                             
-                             {/* הצגת הקישור אם קיים */}
-                             {job.url && (
-                               <a 
-                                 href={job.url}
-                                 target="_blank"
-                                 rel="noopener noreferrer"
-                                 className="text-xs text-slate-400 hover:text-blue-500 hover:underline truncate block flex items-center gap-1 mt-2"
-                                 dir="ltr"
-                               >
-                                 <LinkIcon size={10} />
-                                 {job.url}
-                               </a>
-                             )}
-                           </div>
-
-                           <button 
-                             onClick={() => handleRetry(job.url)}
-                             className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-blue-500 transition-all shrink-0"
-                             title="אתחל משרה"
-                           >
-                             <RefreshCw size={16} />
-                           </button>
-                         </div>
-                       </div>
-                     );
-                   })
-                 )}
-              </div>
+              <ActiveQueueList activeQueue={activeQueue} onRetry={handleRetry} />
             </div>
 
           </aside>

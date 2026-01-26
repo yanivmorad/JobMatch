@@ -5,6 +5,132 @@ import {
 } from 'lucide-react';
 import JobModal from './JobCard/JobModal';
 
+export const AppliedJobsTable = ({ jobs, onAction, onRowClick }) => {
+  const formatTime = (dateString) => {
+    if (!dateString) return 'לא ידוע';
+    const date = new Date(dateString);
+    return new Intl.DateTimeFormat('he-IL', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date);
+  };
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-right border-collapse">
+          <thead>
+            <tr className="bg-slate-50/70 text-slate-500 font-black text-xs uppercase tracking-wider border-b border-slate-200">
+              <th className="px-8 py-6 text-right">פרטי המשרה</th>
+              <th className="px-8 py-6 text-center">תאריך הגשה</th>
+              <th className="px-8 py-6 text-center">ציון התאמה</th>
+              <th className="px-8 py-6 text-center">סטטוס נוכחי</th>
+              <th className="px-8 py-6 text-left">ניהול פעולות</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {jobs.map((job) => (
+              <tr 
+                key={job.url} 
+                className="hover:bg-slate-50 transition-all duration-200 group cursor-pointer"
+                onClick={() => onRowClick?.(job)}
+              >
+                <td className="px-8 py-7">
+                  <div className="flex flex-col gap-2">
+                    <span className="font-black text-slate-900 text-lg group-hover:text-blue-600 transition-colors">
+                      {job.job_title}
+                    </span>
+                    <span className="text-slate-500 text-sm font-medium flex items-center gap-2">
+                      <Building2 size={14} className="text-slate-400" />
+                      {job.company}
+                    </span>
+                    <a 
+                      href={job.url} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="flex items-center gap-1.5 text-blue-600 text-xs font-black mt-1 hover:underline w-fit"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ExternalLink size={12}/>
+                      צפייה במקור
+                    </a>
+                  </div>
+                </td>
+                <td className="px-8 py-7 text-center">
+                  <div className="inline-flex items-center gap-2 text-slate-600 text-sm font-medium bg-slate-50 px-3 py-1.5 rounded-full">
+                    <Calendar size={14} className="text-slate-400"/>
+                    {formatTime(job.updated_at || job.analyzed_at)}
+                  </div>
+                </td>
+                <td className="px-8 py-7 text-center">
+                  <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-black border ${
+                    job.suitability_score >= 85 
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                    : job.suitability_score >= 50
+                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                    : 'bg-rose-50 text-rose-700 border-rose-200'
+                  }`}>
+                    <Target size={14} />
+                    {job.suitability_score}%
+                  </div>
+                </td>
+                <td className="px-8 py-7 text-center">
+                  {job.user_action === 'applied' ? (
+                    <span className="inline-flex items-center gap-2 px-3 py-2 rounded-full text-xs font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <CheckCircle size={14} />
+                      נשלח בהצלחה
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-2 px-3 py-2 rounded-full text-xs font-black bg-rose-50 text-rose-700 border border-rose-200">
+                      <TrendingDown size={14} />
+                      נדחה על ידי המעסיק
+                    </span>
+                  )}
+                </td>
+                <td className="px-8 py-7 text-left">
+                  <div className="flex items-center justify-end gap-3">
+                    {job.user_action !== 'rejected' && (
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm('לסמן משרה זו כנדחה? פעולה זו תעדכן את הסטטוס.')) {
+                            onAction(job, 'rejected');
+                          }
+                        }}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 rounded-xl transition-all font-bold text-sm border border-rose-200"
+                        title="סמן כדחייה"
+                      >
+                        <TrendingDown size={16} />
+                        <span>דחייה</span>
+                      </button>
+                    )}
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm('להעביר משרה לארכיון? היא תוסר מהרשימה אבל תשמר בהיסטוריה.')) {
+                          onAction(job, 'ignored');
+                        }
+                      }}
+                      className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 rounded-xl transition-all font-bold text-sm border border-slate-200"
+                      title="העבר לארכיון"
+                    >
+                      <Archive size={16} />
+                      <span>ארכיון</span>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 const AppliedJobsTab = ({ jobs, onRemove }) => {
   const [selectedJob, setSelectedJob] = useState(null);
   
@@ -100,115 +226,11 @@ const AppliedJobsTab = ({ jobs, onRemove }) => {
       </div>
 
       {/* הטבלה המעוצבת */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-right border-collapse">
-            <thead>
-              <tr className="bg-slate-50/70 text-slate-500 font-black text-xs uppercase tracking-wider border-b border-slate-200">
-                <th className="px-8 py-6 text-right">פרטי המשרה</th>
-                <th className="px-8 py-6 text-center">תאריך הגשה</th>
-                <th className="px-8 py-6 text-center">ציון התאמה</th>
-                <th className="px-8 py-6 text-center">סטטוס נוכחי</th>
-                <th className="px-8 py-6 text-left">ניהול פעולות</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {jobs.map((job) => (
-                <tr 
-                  key={job.url} 
-                  className="hover:bg-slate-50 transition-all duration-200 group cursor-pointer"
-                  onClick={() => setSelectedJob(job)}
-                >
-                  <td className="px-8 py-7">
-                    <div className="flex flex-col gap-2">
-                      <span className="font-black text-slate-900 text-lg group-hover:text-blue-600 transition-colors">
-                        {job.job_title}
-                      </span>
-                      <span className="text-slate-500 text-sm font-medium flex items-center gap-2">
-                        <Building2 size={14} className="text-slate-400" />
-                        {job.company}
-                      </span>
-                      <a 
-                        href={job.url} 
-                        target="_blank" 
-                        rel="noopener noreferrer" 
-                        className="flex items-center gap-1.5 text-blue-600 text-xs font-black mt-1 hover:underline w-fit"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <ExternalLink size={12}/>
-                        צפייה במקור
-                      </a>
-                    </div>
-                  </td>
-                  <td className="px-8 py-7 text-center">
-                    <div className="inline-flex items-center gap-2 text-slate-600 text-sm font-medium bg-slate-50 px-3 py-1.5 rounded-full">
-                      <Calendar size={14} className="text-slate-400"/>
-                      {formatTime(job.updated_at || job.analyzed_at)}
-                    </div>
-                  </td>
-                  <td className="px-8 py-7 text-center">
-                    <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-black border ${
-                      job.suitability_score >= 85 
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                      : job.suitability_score >= 50
-                      ? 'bg-amber-50 text-amber-700 border-amber-200'
-                      : 'bg-rose-50 text-rose-700 border-rose-200'
-                    }`}>
-                      <Target size={14} />
-                      {job.suitability_score}%
-                    </div>
-                  </td>
-                  <td className="px-8 py-7 text-center">
-                    {job.user_action === 'applied' ? (
-                      <span className="inline-flex items-center gap-2 px-3 py-2 rounded-full text-xs font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        <CheckCircle size={14} />
-                        נשלח בהצלחה
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-2 px-3 py-2 rounded-full text-xs font-black bg-rose-50 text-rose-700 border border-rose-200">
-                        <TrendingDown size={14} />
-                        נדחה על ידי המעסיק
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-8 py-7 text-left">
-                    <div className="flex items-center justify-end gap-3">
-                      {job.user_action !== 'rejected' && (
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (confirm('לסמן משרה זו כנדחה? פעולה זו תעדכן את הסטטוס.')) {
-                              onRemove(job, 'rejected');
-                            }
-                          }}
-                          className="flex items-center gap-2 px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 rounded-xl transition-all font-bold text-sm border border-rose-200"
-                          title="סמן כדחייה"
-                        >
-                          <TrendingDown size={16} />
-                          <span>דחייה</span>
-                        </button>
-                      )}
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (confirm('להעביר משרה לארכיון? היא תוסר מהרשימה אבל תשמר בהיסטוריה.')) {
-                            onRemove(job, 'ignored');
-                          }
-                        }}
-                        className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 rounded-xl transition-all font-bold text-sm border border-slate-200"
-                        title="העבר לארכיון"
-                      >
-                        <Archive size={16} />
-                        <span>ארכיון</span>
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <AppliedJobsTable 
+        jobs={jobs} 
+        onAction={onRemove} 
+        onRowClick={setSelectedJob} 
+      />
 
       {selectedJob && (
         <JobModal

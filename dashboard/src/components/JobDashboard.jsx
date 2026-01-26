@@ -6,11 +6,13 @@ import AddJobsTab from './AddJobsTab';
 import HistoryTab from './HistoryTab';
 import AppliedJobsTab from './AppliedJobsTab';
 import ProfileTab from './ProfileTab';
+import OverviewTab from './OverviewTab';
 
 const JobDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // --- 1. שליפת נתונים ---
   const fetchJobs = async () => {
@@ -89,22 +91,31 @@ const JobDashboard = () => {
   };
 
   // --- 4. פילטורים ---
-  const pendingJobs = jobs.filter(j =>
+  const filteredJobs = jobs.filter(j => {
+    const s = searchQuery.toLowerCase();
+    return (
+      (j.job_title || '').toLowerCase().includes(s) ||
+      (j.company || '').toLowerCase().includes(s) ||
+      (j.url || '').toLowerCase().includes(s)
+    );
+  });
+
+  const pendingJobs = filteredJobs.filter(j =>
     ['NEW', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING', 'FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA'].includes(j.status)
   );
 
-  const activeJobs = jobs
+  const activeJobs = filteredJobs
     .filter(j => 
       !j.is_archived && 
       (j.status === 'COMPLETED' || ['FAILED_SCRAPE', 'NO_DATA', 'WAITING_FOR_AI', 'ANALYZING'].includes(j.status))
     )
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
-  const appliedJobs = jobs
+  const appliedJobs = filteredJobs
     .filter(j => j.user_action === 'applied')
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
-  const historyJobs = jobs
+  const historyJobs = filteredJobs
     .filter(j => j.is_archived && j.user_action !== 'applied')
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
@@ -115,6 +126,8 @@ const JobDashboard = () => {
           activeTab={activeTab} 
           setActiveTab={setActiveTab} 
           counts={{ active: activeJobs.length, pending: pendingJobs.length, applied: appliedJobs.length }}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
         />
       </div>
 
@@ -122,6 +135,18 @@ const JobDashboard = () => {
         <div className="w-full max-w-[90%] mx-auto px-4 py-8 flex flex-col">          
           <div className="w-full transition-all duration-500 ease-in-out"> 
             {activeTab === 'dashboard' && (
+              <OverviewTab 
+                jobs={filteredJobs}
+                activeJobs={activeJobs} 
+                appliedJobs={appliedJobs}
+                pendingJobs={pendingJobs}
+                onAction={handleCardAction}
+                onDelete={handleDeleteJob}
+                onSwitchTab={setActiveTab} 
+              />
+            )}
+            
+            {activeTab === 'active' && (
               <ActiveJobsTab 
                 jobs={activeJobs} 
                 onAction={handleCardAction}

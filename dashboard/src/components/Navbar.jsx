@@ -1,9 +1,10 @@
 import React from 'react';
-import { Briefcase, PlusCircle, History, Send, User, Sparkles } from 'lucide-react';
+import { Briefcase, PlusCircle, History, Send, User, Sparkles, Search } from 'lucide-react';
 
-const Navbar = ({ activeTab, setActiveTab, counts }) => {
+const Navbar = ({ activeTab, setActiveTab, counts, searchQuery, setSearchQuery }) => {
   const tabs = [
-    { id: 'dashboard', label: 'משרות', icon: Briefcase, count: counts.active },
+    { id: 'dashboard', label: 'דשבורד', icon: Sparkles },
+    { id: 'active', label: 'משרות', icon: Briefcase, count: counts.active },
     { id: 'add', label: 'הוספה', icon: PlusCircle, count: counts.pending },
     { id: 'applied', label: 'נשלחו', icon: Send, count: counts.applied },
     { id: 'history', label: 'ארכיון', icon: History },
@@ -62,10 +63,17 @@ const Navbar = ({ activeTab, setActiveTab, counts }) => {
             ))}
           </div>
 
-          {/* Right Spacer - שומר על הניווט במרכז */}
+          {/* Search Section - צד שמאל */}
           <div className="hidden lg:flex w-1/4 justify-end">
-             <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-50 px-3 py-1 rounded-full border border-slate-100">
-                System Active
+             <div className="relative flex items-center w-full max-w-[280px] bg-slate-100/80 rounded-2xl px-4 py-2 border border-slate-200/50 focus-within:ring-2 focus-within:ring-blue-100 focus-within:bg-white transition-all group">
+                <Search className="w-4 h-4 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+                <input 
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="חיפוש חופשי..."
+                  className="bg-transparent border-none focus:ring-0 text-xs w-full mr-2 placeholder:text-slate-400 text-slate-700 font-bold"
+                />
              </div>
           </div>
 
