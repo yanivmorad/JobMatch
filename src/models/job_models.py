@@ -51,3 +51,8 @@ class ManualUpdate(BaseModel):
     company: str
     title: str
     description: str
+
+
+class ApplicationStatusUpdateRequest(BaseModel):
+    url: str
+    status: str

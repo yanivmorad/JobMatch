@@ -3,15 +3,19 @@ import logging
 
 from fastapi import APIRouter
 
-# IMPORT REPOSITORY INSTEAD OF JSON_DB
 from db.jobs_repository import (
+    ApplicationStatus,
     add_new_job,
     delete_job_by_url,
     get_all_jobs,
+    update_application_status,
     update_manual_job,
 )
+
+# IMPORT REPOSITORY INSTEAD OF JSON_DB
 from models.job_models import (
     ActionRequest,
+    ApplicationStatusUpdateRequest,
     JobSubmission,
     ManualUpdate,
     TextSubmission,
@@ -107,3 +111,15 @@ async def retry_endpoint(url: str):
 
     await retry_job(url)
     return {"message": "Job queued for retry"}
+
+
+@router.post("/jobs/application-status")
+async def update_job_status(req: ApplicationStatusUpdateRequest):
+    """עדכון סטטוס אפליקציה (pending, applied, וכו')"""
+    logger.info(f"📋 Updating application status for: {req.url} to {req.status}")
+    try:
+        status_enum = ApplicationStatus(req.status)
+        await update_application_status(req.url, status_enum)
+        return {"message": "Application status updated"}
+    except ValueError:
+        return {"error": "Invalid status value"}, 400

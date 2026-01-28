@@ -1,6 +1,7 @@
 # src/db/jobs_repository.py
 import json
 import logging
+from enum import Enum
 from typing import List, Optional
 
 from db.postgres import get_pool
@@ -133,17 +134,26 @@ async def update_user_action(url: str, action: str):
     pool = await get_pool()
     is_archived = action != "none"
 
-    # חשוב מאוד: הסדר של המשתנים בתוך ה-execute חייב להתאים ל-$1, $2, $3
+    # סנכרון עם ה-Logic החדש של application_status
+    app_status = "pending"
+    if action == "applied":
+        app_status = "applied"
+    elif action == "ignored":
+        app_status = "not_relevant"
+
+    # חשוב מאוד: הסדר של המשתנים בתוך ה-execute חייב להתאים ל-$1, $2, $3, $4
     await pool.execute(
         """
         UPDATE jobs 
         SET user_action = $1, 
-            is_archived = $2 
-        WHERE url = $3
+            is_archived = $2,
+            application_status = $3
+        WHERE url = $4
         """,
-        action,  # זה יחליף את $1
-        is_archived,  # זה יחליף את $2
-        url,  # זה יחליף את $3
+        action,
+        is_archived,
+        app_status,
+        url,
     )
 
 
@@ -166,6 +176,56 @@ async def update_manual_job(url: str, company: str, title: str, description: str
         company,
         title,
         description,
+    )
+
+
+class ApplicationStatus(str, Enum):
+    PENDING = "pending"  # משרה חדשה שעוד לא טופלה
+    NOT_RELEVANT = "not_relevant"  # הוחלט לא להגיש
+    APPLIED = "applied"  # הוגשה מועמדות
+    PHONE_SCREEN = "phone_screen"  # שיחת טלפון ראשונית
+    INTERVIEW = "interview"  # תהליך ראיונות
+    REJECTED = "rejected"  # התקבלה דחייה
+    GHOSTED = "ghosted"  # לא ענו הרבה זמן
+
+
+async def update_application_status(url: str, status: ApplicationStatus):
+    pool = await get_pool()
+
+    # לוגיקה אוטומטית: אם זה דחייה או לא רלוונטי, נרצה לארכב
+    is_archived = status in [ApplicationStatus.NOT_RELEVANT, ApplicationStatus.REJECTED]
+
+    # סנכרון עם ה-Logic הישן של user_action
+    user_action = "none"
+    if status == ApplicationStatus.APPLIED:
+        user_action = "applied"
+    elif status in [ApplicationStatus.NOT_RELEVANT, ApplicationStatus.REJECTED]:
+        user_action = "ignored"
+
+    await pool.execute(
+        """
+        UPDATE jobs 
+        SET application_status = $1,
+            user_action = $2,
+            is_archived = $3
+        WHERE url = $4
+        """,
+        status.value,
+        user_action,
+        is_archived,
+        url,
+    )
+
+
+async def auto_archive_old_applications():
+    pool = await get_pool()
+    await pool.execute(
+        """
+        UPDATE jobs 
+        SET application_status = 'ghosted' 
+        WHERE application_status = 'applied' 
+        AND created_at < NOW() - INTERVAL '30 days'
+        """
     )
 
 
