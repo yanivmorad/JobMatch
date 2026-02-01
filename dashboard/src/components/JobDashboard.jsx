@@ -80,6 +80,30 @@ const JobDashboard = () => {
     }
   };
 
+  const handleUpdateApplicationStatus = async (url, newStatus) => {
+    // עדכון אופטימי
+    setJobs(prev => prev.map(j => {
+      if (j.url === url) {
+        const isArchived = ['not_relevant', 'rejected'].includes(newStatus);
+        return { ...j, application_status: newStatus, is_archived: isArchived || j.is_archived };
+      }
+      return j;
+    }));
+
+    try {
+      await axios.post('http://localhost:8000/api/jobs/application-status', {
+        url: url,
+        status: newStatus
+      });
+      await fetchJobs();
+      return true;
+    } catch (err) {
+      console.error("Status Update Failed:", err);
+      alert("עדכון הסטטוס נכשל.");
+      return false;
+    }
+  };
+
   const handleDeleteJob = async (job) => {
     if (!window.confirm('למחוק את המשרה לצמיתות?')) return;
     try {
@@ -87,6 +111,17 @@ const JobDashboard = () => {
       setJobs(prev => prev.filter(j => j.url !== job.url));
     } catch (err) {
       console.error("Delete Failed", err);
+    }
+  };
+
+  const handleRetryJob = async (url) => {
+    try {
+      await axios.post(`http://localhost:8000/api/jobs/retry`, null, { params: { url } });
+      await fetchJobs();
+      return true;
+    } catch (err) {
+      console.error("Retry Failed", err);
+      return false;
     }
   };
 
@@ -107,16 +142,17 @@ const JobDashboard = () => {
   const activeJobs = filteredJobs
     .filter(j => 
       !j.is_archived && 
+      (j.application_status === 'pending' || !j.application_status) &&
       (j.status === 'COMPLETED' || ['FAILED_SCRAPE', 'NO_DATA', 'WAITING_FOR_AI', 'ANALYZING'].includes(j.status))
     )
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
   const appliedJobs = filteredJobs
-    .filter(j => j.user_action === 'applied')
+    .filter(j => j.application_status && !['pending', 'not_relevant'].includes(j.application_status))
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
   const historyJobs = filteredJobs
-    .filter(j => j.is_archived && j.user_action !== 'applied')
+    .filter(j => j.is_archived && (j.application_status === 'not_relevant' || !j.application_status))
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
   return (
@@ -142,6 +178,8 @@ const JobDashboard = () => {
                 pendingJobs={pendingJobs}
                 onAction={handleCardAction}
                 onDelete={handleDeleteJob}
+                onUpdateStatus={handleUpdateApplicationStatus}
+                onRetry={handleRetryJob}
                 onSwitchTab={setActiveTab} 
               />
             )}
@@ -151,6 +189,8 @@ const JobDashboard = () => {
                 jobs={activeJobs} 
                 onAction={handleCardAction}
                 onDelete={handleDeleteJob}
+                onUpdateStatus={handleUpdateApplicationStatus}
+                onRetry={handleRetryJob}
                 onSwitchTab={setActiveTab} 
                 onRefresh={fetchJobs} 
               />
@@ -161,11 +201,23 @@ const JobDashboard = () => {
             )}
 
             {activeTab === 'applied' && (
-              <AppliedJobsTab jobs={appliedJobs} onRemove={handleCardAction} onRefresh={fetchJobs} />
+              <AppliedJobsTab 
+                jobs={appliedJobs} 
+                onRemove={handleCardAction} 
+                onUpdateStatus={handleUpdateApplicationStatus} 
+                onRetry={handleRetryJob}
+                onRefresh={fetchJobs} 
+              />
             )}
 
             {activeTab === 'history' && (
-              <HistoryTab jobs={historyJobs} onRefresh={fetchJobs} onRestore={handleCardAction} />
+              <HistoryTab 
+                jobs={historyJobs} 
+                onUpdateStatus={handleUpdateApplicationStatus} 
+                onRefresh={fetchJobs} 
+                onRestore={handleCardAction} 
+                onRetry={handleRetryJob}
+              />
             )}
 
             {activeTab === 'profile' && <ProfileTab />}

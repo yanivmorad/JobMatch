@@ -2,7 +2,7 @@
 import React from 'react';
 import JobCard from './JobCard'; // וודא שהנתיב נכון
 
-const ActiveJobsTab = ({ jobs, onAction, onDelete, onRefresh }) => {
+const ActiveJobsTab = ({ jobs, onAction, onDelete, onRefresh, onUpdateStatus, onRetry }) => {
   if (jobs.length === 0) {
     return (
       <div className="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-slate-200">
@@ -32,6 +32,8 @@ const ActiveJobsTab = ({ jobs, onAction, onDelete, onRefresh }) => {
             job={job} 
             onAction={onAction} 
             onDelete={onDelete}
+            onUpdateStatus={onUpdateStatus}
+            onRetry={onRetry}
           />
         ))}
       </div>

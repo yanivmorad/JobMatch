@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { 
-  Trash2, CheckCircle, XCircle, ArchiveRestore, Clock, RotateCcw, History, FolderOpen, Building2 
+  Trash2, CheckCircle, XCircle, ArchiveRestore, Clock, RotateCcw, History, FolderOpen, Building2, AlertCircle, ChevronDown
 } from 'lucide-react';
 import axios from 'axios';
 import JobModal from './JobCard/JobModal';
+import { STATUS_CONFIG } from '../constants/statusConfig';
 
-const HistoryTab = ({ jobs, onRefresh, onRestore }) => {
+const HistoryTab = ({ jobs, onRefresh, onRestore, onUpdateStatus, onRetry }) => {
   const [selectedJob, setSelectedJob] = useState(null);
   
   const clearHistory = async () => {
@@ -17,8 +18,8 @@ const HistoryTab = ({ jobs, onRefresh, onRestore }) => {
   // נתונים סטטיסטיים
   const stats = {
     total: jobs.length,
-    rejected: jobs.filter(j => j.user_action === 'rejected').length,
-    ignored: jobs.filter(j => j.user_action === 'ignored').length,
+    rejected: jobs.filter(j => j.application_status === 'rejected').length,
+    not_relevant: jobs.filter(j => j.application_status === 'not_relevant').length,
   };
 
   if (jobs.length === 0) {
@@ -61,8 +62,8 @@ const HistoryTab = ({ jobs, onRefresh, onRestore }) => {
                 <span className="text-rose-600 font-bold text-sm">{stats.rejected} דחויות</span>
               </div>
               <div className="bg-white rounded-xl px-3 py-2 border border-slate-200 flex items-center gap-2">
-                <ArchiveRestore size={14} className="text-slate-500" />
-                <span className="text-slate-600 font-bold text-sm">{stats.ignored} לא רלוונטיות</span>
+                <AlertCircle size={14} className="text-slate-500" />
+                <span className="text-slate-600 font-bold text-sm">{stats.not_relevant} לא רלוונטיות</span>
               </div>
             </div>
           </div>
@@ -95,7 +96,7 @@ const HistoryTab = ({ jobs, onRefresh, onRestore }) => {
             <div className={`
               absolute left-0 top-0 h-full w-1 transition-all duration-300
               group-hover:w-2
-              ${job.user_action === 'rejected' ? 'bg-gradient-to-b from-rose-400 to-rose-500' : 'bg-gradient-to-b from-slate-400 to-slate-500'}
+              ${job.application_status === 'rejected' ? 'bg-gradient-to-b from-rose-400 to-rose-500' : 'bg-gradient-to-b from-slate-400 to-slate-500'}
             `}></div>
 
             <div className="p-6 pl-8">
@@ -104,11 +105,11 @@ const HistoryTab = ({ jobs, onRefresh, onRestore }) => {
                 <div className="flex items-center gap-5 flex-1">
                   <div className={`
                     p-3 rounded-2xl transition-transform duration-300 group-hover:scale-110
-                    ${job.user_action === 'rejected' 
+                    ${job.application_status === 'rejected' 
                       ? 'bg-rose-100 text-rose-700 shadow-rose-100 shadow-md' 
                       : 'bg-slate-100 text-slate-600 shadow-slate-100 shadow-md'}
                   `}>
-                    {job.user_action === 'rejected' 
+                    {job.application_status === 'rejected' 
                       ? <XCircle className="w-6 h-6" /> 
                       : <ArchiveRestore className="w-6 h-6" />
                     }
@@ -123,14 +124,40 @@ const HistoryTab = ({ jobs, onRefresh, onRestore }) => {
                         <Building2 size={14} className="text-slate-400" />
                         {job.company}
                       </p>
-                      <span className={`
-                        text-[11px] px-3 py-1 rounded-full font-black uppercase tracking-wider
-                        ${job.user_action === 'rejected' 
-                          ? 'bg-rose-50 text-rose-700 border border-rose-200' 
-                          : 'bg-slate-50 text-slate-600 border border-slate-200'}
-                      `}>
-                        {job.user_action === 'rejected' ? 'נדחה' : 'לא רלוונטי'}
-                      </span>
+                      
+                      {/* Status Management Dropdown */}
+                      <div 
+                        className="relative group/status"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {(() => {
+                          const status = job.application_status || 'pending';
+                          const config = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
+                          return (
+                            <div 
+                              className="px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all border"
+                              style={{ 
+                                backgroundColor: config.bg, 
+                                color: config.color,
+                                borderColor: config.border
+                              }}
+                            >
+                              <config.icon size={12} />
+                              {config.label}
+                              <ChevronDown size={14} />
+                            </div>
+                          );
+                        })()}
+                        <select
+                          value={job.application_status || 'pending'}
+                          onChange={(e) => onUpdateStatus(job.url, e.target.value)}
+                          className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                        >
+                          {Object.entries(STATUS_CONFIG).map(([key, config]) => (
+                            <option key={key} value={key}>{config.label}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -184,6 +211,8 @@ const HistoryTab = ({ jobs, onRefresh, onRestore }) => {
           job={selectedJob}
           onClose={() => setSelectedJob(null)}
           onAction={onRestore}
+          onUpdateStatus={onUpdateStatus}
+          onRetry={onRetry}
         />
       )}
     </div>

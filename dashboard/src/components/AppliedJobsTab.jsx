@@ -4,8 +4,10 @@ import {
   TrendingDown, Archive, AlertCircle, Briefcase, Building2 
 } from 'lucide-react';
 import JobModal from './JobCard/JobModal';
+import { STATUS_CONFIG } from '../constants/statusConfig';
+import { ChevronDown } from 'lucide-react';
 
-export const AppliedJobsTable = ({ jobs, onAction, onRowClick }) => {
+export const AppliedJobsTable = ({ jobs, onAction, onUpdateStatus, onRowClick }) => {
   const formatTime = (dateString) => {
     if (!dateString) return 'לא ידוע';
     const date = new Date(dateString);
@@ -78,32 +80,53 @@ export const AppliedJobsTable = ({ jobs, onAction, onRowClick }) => {
                   </div>
                 </td>
                 <td className="px-8 py-7 text-center">
-                  {job.user_action === 'applied' ? (
-                    <span className="inline-flex items-center gap-2 px-3 py-2 rounded-full text-xs font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      <CheckCircle size={14} />
-                      נשלח בהצלחה
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-2 px-3 py-2 rounded-full text-xs font-black bg-rose-50 text-rose-700 border border-rose-200">
-                      <TrendingDown size={14} />
-                      נדחה על ידי המעסיק
-                    </span>
-                  )}
+                  <div 
+                    className="relative inline-block"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {(() => {
+                      const status = job.application_status || 'pending';
+                      const config = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
+                      return (
+                        <div 
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-full text-xs font-black border transition-all"
+                          style={{ 
+                            backgroundColor: config.bg, 
+                            color: config.color,
+                            borderColor: config.border
+                          }}
+                        >
+                          <config.icon className="w-3 h-3" />
+                          {config.label}
+                          <ChevronDown size={14} />
+                        </div>
+                      );
+                    })()}
+                    <select
+                      value={job.application_status || 'pending'}
+                      onChange={(e) => onUpdateStatus(job.url, e.target.value)}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                    >
+                      {Object.entries(STATUS_CONFIG).map(([key, config]) => (
+                        <option key={key} value={key}>{config.label}</option>
+                      ))}
+                    </select>
+                  </div>
                 </td>
                 <td className="px-8 py-7 text-left">
                   <div className="flex items-center justify-end gap-3">
-                    {job.user_action !== 'rejected' && (
+                    {job.application_status !== 'rejected' && (
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
                           if (confirm('לסמן משרה זו כנדחה? פעולה זו תעדכן את הסטטוס.')) {
-                            onAction(job, 'rejected');
+                            onUpdateStatus(job.url, 'rejected');
                           }
                         }}
                         className="flex items-center gap-2 px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 rounded-xl transition-all font-bold text-sm border border-rose-200"
                         title="סמן כדחייה"
                       >
-                        <TrendingDown size={16} />
+                        <AlertCircle size={16} />
                         <span>דחייה</span>
                       </button>
                     )}
@@ -111,7 +134,7 @@ export const AppliedJobsTable = ({ jobs, onAction, onRowClick }) => {
                       onClick={(e) => {
                         e.stopPropagation();
                         if (confirm('להעביר משרה לארכיון? היא תוסר מהרשימה אבל תשמר בהיסטוריה.')) {
-                          onAction(job, 'ignored');
+                          onUpdateStatus(job.url, 'not_relevant');
                         }
                       }}
                       className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 rounded-xl transition-all font-bold text-sm border border-slate-200"
@@ -131,7 +154,7 @@ export const AppliedJobsTable = ({ jobs, onAction, onRowClick }) => {
   );
 };
 
-const AppliedJobsTab = ({ jobs, onRemove }) => {
+const AppliedJobsTab = ({ jobs, onRemove, onUpdateStatus, onRetry }) => {
   const [selectedJob, setSelectedJob] = useState(null);
   
   const formatTime = (dateString) => {
@@ -229,6 +252,7 @@ const AppliedJobsTab = ({ jobs, onRemove }) => {
       <AppliedJobsTable 
         jobs={jobs} 
         onAction={onRemove} 
+        onUpdateStatus={onUpdateStatus}
         onRowClick={setSelectedJob} 
       />
 
@@ -237,6 +261,7 @@ const AppliedJobsTab = ({ jobs, onRemove }) => {
           job={selectedJob}
           onClose={() => setSelectedJob(null)}
           onAction={onRemove}
+          onUpdateStatus={onUpdateStatus}
         />
       )}
     </div>

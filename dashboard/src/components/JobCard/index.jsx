@@ -1,17 +1,18 @@
-import React, { useEffect } from 'react';
-import { Building2, MapPin, Info, Target, TrendingUp, Calendar } from 'lucide-react';
+import React from 'react';
+import { Building2, MapPin, Info, Target, TrendingUp, Calendar, ChevronDown } from 'lucide-react';
 import JobModal from './JobModal';
+import { STATUS_CONFIG } from '../../constants/statusConfig';
 
-const JobCard = ({ job, onAction, onDelete, onManualUpdate }) => {
+const JobCard = ({ job, onAction, onDelete, onUpdateStatus, onRetry }) => {
   const [isModalOpen, setIsModalOpen] = React.useState(false);
 
-  useEffect(() => {
-    console.log(`JobCard Debug [${job.job_title}]:`, {
-      summary: job.job_summary_hebrew,
-      suitability: job.suitability_score,
-      probability: job.acceptance_probability
-    });
-  }, [job]);
+  const currentStatus = job.application_status || 'pending';
+  const statusInfo = STATUS_CONFIG[currentStatus];
+
+  const handleStatusChange = (e) => {
+    e.stopPropagation();
+    onUpdateStatus(job.url, e.target.value);
+  };
 
   // פונקציה לבחירת צבע טקסט בלבד לפי הציון
   const getScoreColorClass = (score) => {
@@ -30,12 +31,28 @@ const JobCard = ({ job, onAction, onDelete, onManualUpdate }) => {
         {/* שורת כותרת וציונים */}
         <div className="flex items-start justify-between gap-4 mb-3">
           <div className="flex-1 min-w-0">
-            <h3 className="text-lg font-semibold text-slate-800 mb-1 line-clamp-1 group-hover:text-blue-600 transition-colors">
-              {job.job_title || job.url}
-            </h3>
-            <div className="flex items-center gap-2 text-slate-600">
-              <Building2 className="w-4 h-4 flex-shrink-0" />
-              <span className="text-sm truncate">{job.company}</span>
+            <div className="flex items-center gap-2 mb-1">
+              <h3 className="text-lg font-semibold text-slate-800 line-clamp-1 group-hover:text-blue-600 transition-colors">
+                {job.job_title || job.url}
+              </h3>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 text-slate-600">
+                <Building2 className="w-4 h-4 flex-shrink-0" />
+                <span className="text-sm truncate">{job.company}</span>
+              </div>
+              
+              {/* Status Badge */}
+              <div 
+                className="px-2 py-0.5 rounded text-[10px] font-bold transition-all border shrink-0"
+                style={{ 
+                  backgroundColor: statusInfo.bg, 
+                  color: statusInfo.color,
+                  borderColor: statusInfo.border
+                }}
+              >
+                {statusInfo.label}
+              </div>
             </div>
           </div>
 
@@ -90,6 +107,8 @@ const JobCard = ({ job, onAction, onDelete, onManualUpdate }) => {
           onClose={() => setIsModalOpen(false)}
           onAction={onAction}
           onDelete={() => onDelete(job)}
+          onUpdateStatus={onUpdateStatus}
+          onRetry={onRetry}
         />
       )}
     </>

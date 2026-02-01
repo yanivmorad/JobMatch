@@ -1,19 +1,28 @@
 import React, { useState } from 'react';
 import { 
   X, ExternalLink, Send, FileText, Lightbulb, 
-  AlertCircle, TrendingUp, Sparkles, Clock, Building2, MapPin, ChevronDown, Loader2
+  AlertCircle, TrendingUp, Sparkles, Clock, Building2, MapPin, ChevronDown, Loader2, RefreshCw
 } from 'lucide-react';
+import { STATUS_CONFIG } from '../../constants/statusConfig';
 
-const JobModal = ({ job, onClose, onAction, onDelete }) => {
+const JobModal = ({ job, onClose, onAction, onDelete, onUpdateStatus, onRetry }) => {
   const [showFullDesc, setShowFullDesc] = useState(false);
   const [isEditing, setIsEditing] = useState(['FAILED_SCRAPE', 'NO_DATA'].includes(job.status));
   const [editTitle, setEditTitle] = useState(job.job_title || '');
   const [editCompany, setEditCompany] = useState(job.company || '');
   const [editDesc, setEditDesc] = useState(job.full_description || '');
   const [isSaving, setIsSaving] = useState(false);
+  const [isRescanLoading, setIsRescanLoading] = useState(false);
   
   const isFailed = ['FAILED_SCRAPE', 'NO_DATA'].includes(job.status);
   const isManual = job.url?.startsWith('manual-') || !job.url?.includes('http');
+
+  const currentStatus = job.application_status || 'pending';
+  const statusInfo = STATUS_CONFIG[currentStatus];
+
+  const handleStatusChange = (e) => {
+    onUpdateStatus(job.url, e.target.value);
+  };
 
   const getScoreColor = (score) => {
     if (score >= 80) return "text-emerald-600 bg-emerald-50 border-emerald-100";
@@ -220,13 +229,54 @@ const JobModal = ({ job, onClose, onAction, onDelete }) => {
           {!isEditing ? (
             <>
               {!isManual && (
-                <a href={job.url} target="_blank" rel="noreferrer" className="w-full md:w-auto px-10 py-5 border-2 border-slate-200 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 transition-all text-center">אתר מקורי</a>
+                <div className="flex gap-2 w-full md:w-auto">
+                  <a href={job.url} target="_blank" rel="noreferrer" className="flex-1 md:flex-none px-6 py-5 border-2 border-slate-200 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 transition-all text-center">אתר מקורי</a>
+                  <button 
+                    onClick={async () => {
+                      if (onRetry) {
+                        setIsRescanLoading(true);
+                        const success = await onRetry(job.url);
+                        if (success) {
+                          onClose();
+                        }
+                        setIsRescanLoading(false);
+                      }
+                    }} 
+                    disabled={isRescanLoading}
+                    className="flex-1 md:flex-none px-6 py-5 border-2 border-amber-200 text-amber-600 font-bold rounded-2xl hover:bg-amber-50 transition-all flex items-center justify-center gap-2"
+                  >
+                    {isRescanLoading ? (
+                      <Loader2 size={18} className="animate-spin" />
+                    ) : (
+                      <RefreshCw size={18} />
+                    )}
+                    <span>סרוק מחדש</span>
+                  </button>
+                </div>
               )}
-              <button onClick={() => onAction(job, 'applied')} className="w-full md:flex-1 inline-flex items-center justify-center gap-3 px-10 py-5 bg-slate-900 text-white font-bold rounded-2xl hover:bg-black shadow-xl transition-all text-lg">
-                <Send size={20} /> <span>עדכון הגשת מועמדות</span>
-              </button>
-              <button onClick={() => setIsEditing(true)} className="px-8 py-5 text-blue-600 font-bold hover:bg-blue-50 rounded-xl transition-colors">עריכה</button>
-              <button onClick={() => onAction(job, 'ignored')} className="px-8 py-5 text-slate-400 font-bold hover:text-rose-600 transition-colors">לא רלוונטי</button>
+              
+              <div className="flex-1 flex flex-col md:flex-row gap-3 w-full">
+                <button 
+                  onClick={() => { onUpdateStatus(job.url, 'applied'); onClose(); }}
+                  className="flex-1 flex items-center justify-center gap-2 px-8 py-5 bg-slate-900 text-white font-bold rounded-2xl hover:bg-black shadow-lg transition-all text-lg"
+                >
+                  <Send size={20} />
+                  <span>שלחתי קורות חיים</span>
+                </button>
+                
+                <button 
+                  onClick={() => { onUpdateStatus(job.url, 'not_relevant'); onClose(); }}
+                  className="flex-1 flex items-center justify-center gap-2 px-8 py-5 bg-white border-2 border-slate-200 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 transition-all text-lg"
+                >
+                  <X size={20} />
+                  <span>לא רלוונטי</span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button onClick={() => setIsEditing(true)} className="px-6 py-4 text-blue-600 font-bold hover:bg-blue-50 rounded-xl transition-colors">עריכה</button>
+                <button onClick={() => { onDelete(job); onClose(); }} className="px-6 py-4 text-slate-400 font-bold hover:text-rose-600 transition-colors text-sm">מחיקה</button>
+              </div>
             </>
           ) : (
             <div className="flex justify-between w-full">

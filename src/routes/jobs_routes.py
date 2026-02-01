@@ -1,13 +1,14 @@
 # src/routes/jobs_routes.py
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from db.jobs_repository import (
     ApplicationStatus,
     add_new_job,
     delete_job_by_url,
     get_all_jobs,
+    get_job_by_url,
     update_application_status,
     update_manual_job,
 )
@@ -36,6 +37,26 @@ async def add_url_jobs(submission: JobSubmission):
     """Intake: רק מכניס ל-DB, הוורקרים יעשו את השאר"""
     added = 0
     skipped = 0
+    skipped_urls = []  # רשימת לינקים שדולגו
+
+    # בדיקת כפילות ללינקים בודדים - דרישת משתמש
+    if len(submission.urls) == 1:
+        url = submission.urls[0].strip()
+        existing = await get_job_by_url(url)
+        if existing:
+            original_date = existing.get("analyzed_at") or existing.get("created_at")
+            date_str = (
+                original_date.strftime("%d/%m/%Y") if original_date else "לא ידוע"
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": f"קישור זה נסרק בעבר בתאריך {date_str}",
+                    "url": url,
+                    "date": date_str,
+                },
+            )
+
     for url in submission.urls:
         clean_url = url.strip()
         if clean_url:
@@ -44,11 +65,30 @@ async def add_url_jobs(submission: JobSubmission):
                 added += 1
             else:
                 skipped += 1
+                # נבדוק מתי הלינק נסרק
+                existing = await get_job_by_url(clean_url)
+                if existing:
+                    original_date = existing.get("analyzed_at") or existing.get(
+                        "created_at"
+                    )
+                    date_str = (
+                        original_date.strftime("%d/%m/%Y")
+                        if original_date
+                        else "לא ידוע"
+                    )
+                    skipped_urls.append(
+                        {
+                            "url": clean_url,
+                            "date": date_str,
+                            "company": existing.get("company", "Unknown"),
+                        }
+                    )
 
     return {
         "message": f"Processed {added + skipped} jobs",
         "added": added,
         "skipped": skipped,
+        "skipped_urls": skipped_urls,  # מידע על לינקים שדולגו
     }
 
 

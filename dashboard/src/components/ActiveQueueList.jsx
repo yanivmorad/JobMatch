@@ -13,10 +13,12 @@ const QueueItem = ({ job, onRetry }) => {
 
   const getStatusConfig = (status) => {
     switch (status) {
+      case 'NEW':
       case 'PENDING': 
       case 'WAITING':
+      case 'WAITING_FOR_SCRAPE':
         return { 
-          text: 'ממתין לתור', 
+          text: 'ממתין לסריקה', 
           color: 'bg-slate-500', 
           lightColor: 'bg-slate-100',
           textColor: 'text-slate-600',
@@ -33,6 +35,7 @@ const QueueItem = ({ job, onRetry }) => {
           icon: <Search size={16} className="animate-pulse" />,
           loading: true
         };
+      case 'WAITING_FOR_AI':
       case 'AI_PENDING':
       case 'ANALYSIS_PENDING':
         return { 
@@ -145,10 +148,11 @@ export const ActiveQueueList = ({ activeQueue, onRetry }) => {
       </div>
     );
   }
+  const reversedQueue = [...activeQueue].reverse();
 
   return (
     <div className="flex flex-col gap-2.5 animate-in fade-in slide-in-from-bottom-2 duration-500">
-      {activeQueue.map((job, idx) => (
+      {reversedQueue.map((job, idx) => (
         <QueueItem key={`${job.url}-${idx}`} job={job} onRetry={onRetry} />
       ))}
       
@@ -164,19 +168,3 @@ export const ActiveQueueList = ({ activeQueue, onRetry }) => {
   );
 };
 
-// הוספת אנימציה מותאמת אישית ל-Tailwind Config אם אין לך
-// בתוך tailwind.config.js:
-// theme: {
-//   extend: {
-//     keyframes: {
-//       'loading-bar': {
-//         '0%': { transform: 'translateX(-100%)' },
-//         '50%': { transform: 'translateX(100%)' },
-//         '100%': { transform: 'translateX(-100%)' },
-//       }
-//     },
-//     animation: {
-//       'loading-bar': 'loading-bar 2s infinite linear',
-//     }
-//   }
-// }

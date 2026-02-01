@@ -37,6 +37,12 @@ async def add_new_job(
         return " 1" in result
 
 
+async def get_job_by_url(url: str) -> Optional[dict]:
+    pool = await get_pool()
+    row = await pool.fetchrow("SELECT * FROM jobs WHERE url = $1", url)
+    return dict(row) if row else None
+
+
 async def fetch_next_job(current_status: str, next_status: str) -> Optional[dict]:
     pool = await get_pool()
     async with pool.acquire() as conn:

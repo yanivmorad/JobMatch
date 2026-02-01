@@ -33,7 +33,9 @@ const OverviewTab = ({
   pendingJobs, 
   onSwitchTab, 
   onAction, 
-  onDelete 
+  onDelete,
+  onUpdateStatus,
+  onRetry
 }) => {
   // Statistics
   const analysisCount = pendingJobs.length;
@@ -130,6 +132,8 @@ const OverviewTab = ({
                     job={job} 
                     onAction={onAction} 
                     onDelete={onDelete} 
+                    onUpdateStatus={onUpdateStatus}
+                    onRetry={onRetry}
                   />
                 ))
               ) : (
@@ -160,6 +164,7 @@ const OverviewTab = ({
             <AppliedJobsTable 
               jobs={recentApplied} 
               onAction={onAction} 
+              onUpdateStatus={onUpdateStatus}
               onRowClick={() => onSwitchTab('applied')}
             />
           </section>
