@@ -23,7 +23,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import JobCard from './JobCard';
-import { AppliedJobsTable } from './AppliedJobsTab';
+import { AppliedJobsTable } from './AppliedJobsTab/AppliedJobsTab';
 import { ActiveQueueList } from './ActiveQueueList';
 
 const OverviewTab = ({ 

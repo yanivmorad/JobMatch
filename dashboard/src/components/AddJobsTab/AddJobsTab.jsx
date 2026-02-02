@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { useJobActions } from '../hooks/useJobActions';
-import ManualFixModal from './AddJobsTab/ManualFixModal';
-import SmartImportCard from './AddJobsTab/SmartImportCard';
-import ManualInputCard from './AddJobsTab/ManualInputCard';
-import AttentionRequiredList from './AddJobsTab/AttentionRequiredList';
+import { useJobActions } from '../../hooks/useJobActions';
+import ManualFixModal from './ManualFixModal';
+import SmartImportCard from './SmartImportCard';
+import ManualInputCard from './ManualInputCard';
+import AttentionRequiredList from './AttentionRequiredList';
 import { Sparkles } from 'lucide-react';
 
 const AddJobsTab = ({ pendingJobs, onJobAdded }) => {

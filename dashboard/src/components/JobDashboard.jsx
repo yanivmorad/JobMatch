@@ -2,9 +2,9 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import Navbar from './Navbar';
 import ActiveJobsTab from './ActiveJobsTab';
-import AddJobsTab from './AddJobsTab';
+import AddJobsTab from './AddJobsTab/AddJobsTab';
 import HistoryTab from './HistoryTab';
-import AppliedJobsTab from './AppliedJobsTab';
+import AppliedJobsTab from './AppliedJobsTab/AppliedJobsTab';
 import ProfileTab from './ProfileTab';
 import OverviewTab from './OverviewTab';
 
