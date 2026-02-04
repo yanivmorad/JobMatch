@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import axios from 'axios';
+import { taskService } from '../services/taskService';
 
 export const useJobActions = (onJobAdded) => {
   const [submitStatus, setSubmitStatus] = useState(null);
@@ -48,16 +48,16 @@ export const useJobActions = (onJobAdded) => {
 
   const handleUrlSubmit = async (parsedLinks, callback) => {
     const result = await handleActionWrapper(async () => {
-      const response = await axios.post('http://localhost:8000/api/jobs/url', { urls: parsedLinks });
+      const data = await taskService.addJobUrls(parsedLinks);
       
-      if (response.data.skipped_urls && response.data.skipped_urls.length > 0) {
-        if (response.data.added === 0) {
+      if (data.skipped_urls && data.skipped_urls.length > 0) {
+        if (data.added === 0) {
           const error = new Error('All URLs were duplicates');
           error.isDuplicateError = true;
-          error.duplicateData = { urls: response.data.skipped_urls };
+          error.duplicateData = { urls: data.skipped_urls };
           throw error;
         }
-        setDuplicateJobs(response.data.skipped_urls);
+        setDuplicateJobs(data.skipped_urls);
       }
       if (callback) callback();
     });
@@ -66,30 +66,26 @@ export const useJobActions = (onJobAdded) => {
 
   const handleTextSubmit = async (text, title, originalUrl = null, isFixModal = false, callback) => {
     return handleActionWrapper(async () => {
-      await axios.post('http://localhost:8000/api/jobs/text', {
-        text,
-        title: title || 'משרה ידנית',
-        url: originalUrl
-      });
+      await taskService.addManualJob(text, title, originalUrl);
       if (callback) callback();
     });
   };
 
   const handleRescan = (url) => handleActionWrapper(async () => {
-    await axios.delete(`http://localhost:8000/api/jobs`, { params: { url } });
-    await axios.post('http://localhost:8000/api/jobs/url', { urls: [url] });
+    await taskService.deleteJob(url);
+    await taskService.addJobUrls([url]);
   });
 
   const handleCancel = async (url) => {
     try {
-      await axios.delete(`http://localhost:8000/api/jobs`, { params: { url } });
+      await taskService.deleteJob(url);
       onJobAdded();
     } catch (err) { console.error(err); }
   };
 
   const handleRetry = async (url) => {
     try {
-      await axios.post(`http://localhost:8000/api/jobs/retry`, null, { params: { url } });
+      await taskService.retryJob(url);
       onJobAdded();
     } catch (err) { console.error(err); }
   };

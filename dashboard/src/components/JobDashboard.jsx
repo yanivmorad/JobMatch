@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
 import Navbar from './Navbar';
 import ActiveJobsTab from './ActiveJobsTab';
 import AddJobsTab from './AddJobsTab/AddJobsTab';
@@ -7,6 +6,7 @@ import HistoryTab from './HistoryTab';
 import AppliedJobsTab from './AppliedJobsTab/AppliedJobsTab';
 import ProfileTab from './ProfileTab';
 import OverviewTab from './OverviewTab';
+import { taskService } from '../services/taskService';
 
 const JobDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -17,8 +17,8 @@ const JobDashboard = () => {
   // --- 1. שליפת נתונים ---
   const fetchJobs = async () => {
     try {
-      const response = await axios.get('http://localhost:8000/api/results');
-      setJobs(response.data);
+      const data = await taskService.getJobs();
+      setJobs(data);
       setLoading(false);
     } catch (err) {
       console.error("Connection Error", err);
@@ -61,14 +61,14 @@ const JobDashboard = () => {
     
     try {
       if (action === 'manual_update') {
-        await axios.post('http://localhost:8000/api/jobs/manual-update', {
+        await taskService.updateManualJob({
           url: url,
           title: manualData.title,
           company: manualData.company,
           description: manualData.description
         });
       } else {
-        await axios.post('http://localhost:8000/api/jobs/action', { url, action });
+        await taskService.updateJobAction(url, action);
       }
       
       await fetchJobs(); // סנכרון סופי מול ה-DB
@@ -80,21 +80,25 @@ const JobDashboard = () => {
     }
   };
 
-  const handleUpdateApplicationStatus = async (url, newStatus) => {
+  const handleUpdateApplicationStatus = async (url, newStatus, isArchived = null) => {
     // עדכון אופטימי
     setJobs(prev => prev.map(j => {
       if (j.url === url) {
-        const isArchived = ['not_relevant', 'rejected'].includes(newStatus);
-        return { ...j, application_status: newStatus, is_archived: isArchived || j.is_archived };
+        // אם לא הועבר במפורש, נשתמש בלוגיקה האוטומטית
+        const autoArchived = ['not_relevant', 'rejected', 'ghosted'].includes(newStatus);
+        const nextArchived = isArchived !== null ? isArchived : (autoArchived || j.is_archived);
+        
+        return { 
+          ...j, 
+          application_status: newStatus, 
+          is_archived: nextArchived 
+        };
       }
       return j;
     }));
 
     try {
-      await axios.post('http://localhost:8000/api/jobs/application-status', {
-        url: url,
-        status: newStatus
-      });
+      await taskService.updateApplicationStatus(url, newStatus, isArchived);
       await fetchJobs();
       return true;
     } catch (err) {
@@ -107,7 +111,7 @@ const JobDashboard = () => {
   const handleDeleteJob = async (job) => {
     if (!window.confirm('למחוק את המשרה לצמיתות?')) return;
     try {
-      await axios.delete('http://localhost:8000/api/jobs', { params: { url: job.url } });
+      await taskService.deleteJob(job.url);
       setJobs(prev => prev.filter(j => j.url !== job.url));
     } catch (err) {
       console.error("Delete Failed", err);
@@ -116,7 +120,7 @@ const JobDashboard = () => {
 
   const handleRetryJob = async (url) => {
     try {
-      await axios.post(`http://localhost:8000/api/jobs/retry`, null, { params: { url } });
+      await taskService.retryJob(url);
       await fetchJobs();
       return true;
     } catch (err) {
@@ -148,11 +152,11 @@ const JobDashboard = () => {
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
   const appliedJobs = filteredJobs
-    .filter(j => j.application_status && !['pending', 'not_relevant'].includes(j.application_status))
+    .filter(j => !j.is_archived && j.application_status && !['pending', 'not_relevant'].includes(j.application_status))
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
   const historyJobs = filteredJobs
-    .filter(j => j.is_archived && (j.application_status === 'not_relevant' || !j.application_status))
+    .filter(j => j.is_archived)
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
   return (

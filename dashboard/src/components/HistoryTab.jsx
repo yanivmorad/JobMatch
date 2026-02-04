@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { 
   Trash2, CheckCircle, XCircle, ArchiveRestore, Clock, RotateCcw, History, FolderOpen, Building2, AlertCircle, ChevronDown
 } from 'lucide-react';
-import axios from 'axios';
+import { taskService } from '../services/taskService';
 import JobModal from './JobCard/JobModal';
 import { STATUS_CONFIG } from '../constants/statusConfig';
 
@@ -11,7 +11,7 @@ const HistoryTab = ({ jobs, onRefresh, onRestore, onUpdateStatus, onRetry }) => 
   
   const clearHistory = async () => {
     if (!window.confirm("האם למחוק את כל המשרות שסומנו כ'לא רלוונטי' מההיסטוריה?")) return;
-    await axios.delete('http://localhost:8000/api/history');
+    await taskService.clearHistory();
     onRefresh(); 
   };
 

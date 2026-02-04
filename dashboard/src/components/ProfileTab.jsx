@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import { taskService } from '../services/taskService';
 import { User, FileText, Save, RefreshCw, AlertCircle } from 'lucide-react';
 
 const ProfileTab = () => {
@@ -17,12 +17,12 @@ const ProfileTab = () => {
   const fetchProfileData = async () => {
     try {
       setLoading(true);
-      const [resumeRes, contextRes] = await Promise.all([
-        axios.get('http://localhost:8000/api/profile/resume'),
-        axios.get('http://localhost:8000/api/profile/context')
+      const [resumeData, contextData] = await Promise.all([
+        taskService.getResume(),
+        taskService.getContext()
       ]);
-      setResume(resumeRes.data.content || '');
-      setContext(contextRes.data.content || '');
+      setResume(resumeData.content || '');
+      setContext(contextData.content || '');
     } catch (error) {
       console.error('Error loading profile:', error);
       setMessage({ type: 'error', text: 'שגיאה בטעינת הנתונים' });
@@ -35,8 +35,8 @@ const ProfileTab = () => {
     try {
       setSaving(true);
       await Promise.all([
-        axios.post('http://localhost:8000/api/profile/resume', { content: resume }),
-        axios.post('http://localhost:8000/api/profile/context', { content: context })
+        taskService.saveResume(resume),
+        taskService.saveContext(context)
       ]);
       setMessage({ type: 'success', text: '✅ השינויים נשמרו בהצלחה!' });
       setTimeout(() => setMessage(null), 3000);
