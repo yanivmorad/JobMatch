@@ -156,10 +156,12 @@ async def retry_endpoint(url: str):
 @router.post("/jobs/application-status")
 async def update_job_status(req: ApplicationStatusUpdateRequest):
     """עדכון סטטוס אפליקציה (pending, applied, וכו')"""
-    logger.info(f"📋 Updating application status for: {req.url} to {req.status}")
+    logger.info(
+        f"📋 Updating application status for: {req.url} to {req.status} (archived: {req.is_archived})"
+    )
     try:
         status_enum = ApplicationStatus(req.status)
-        await update_application_status(req.url, status_enum)
+        await update_application_status(req.url, status_enum, req.is_archived)
         return {"message": "Application status updated"}
     except ValueError:
         return {"error": "Invalid status value"}, 400

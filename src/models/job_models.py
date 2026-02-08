@@ -56,3 +56,4 @@ class ManualUpdate(BaseModel):
 class ApplicationStatusUpdateRequest(BaseModel):
     url: str
     status: str
+    is_archived: Optional[bool] = None

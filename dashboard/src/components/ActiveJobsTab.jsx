@@ -1,6 +1,6 @@
 // src/components/ActiveJobsTab.jsx
 import React from 'react';
-import JobCard from './JobCard'; // וודא שהנתיב נכון
+import JobCard from './JobCard';
 
 const ActiveJobsTab = ({ jobs, onAction, onDelete, onRefresh, onUpdateStatus, onRetry }) => {
   if (jobs.length === 0) {

@@ -195,11 +195,18 @@ class ApplicationStatus(str, Enum):
     GHOSTED = "ghosted"  # לא ענו הרבה זמן
 
 
-async def update_application_status(url: str, status: ApplicationStatus):
+async def update_application_status(
+    url: str, status: ApplicationStatus, is_archived: Optional[bool] = None
+):
     pool = await get_pool()
 
-    # לוגיקה אוטומטית: אם זה דחייה או לא רלוונטי, נרצה לארכב
-    is_archived = status in [ApplicationStatus.NOT_RELEVANT, ApplicationStatus.REJECTED]
+    # לוגיקה אוטומטית: אם זה דחייה, לא רלוונטי או ללא מענה, נרצה לארכב
+    if is_archived is None:
+        is_archived = status in [
+            ApplicationStatus.NOT_RELEVANT,
+            ApplicationStatus.REJECTED,
+            ApplicationStatus.GHOSTED,
+        ]
 
     # סנכרון עם ה-Logic הישן של user_action
     user_action = "none"
