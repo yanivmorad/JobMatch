@@ -94,15 +94,8 @@ class JobAnalyzer:
                 if attempt < 2:
                     time.sleep(2)
 
-        # 3. במקרה של כישלון סופי - מחזירים אובייקט בטוח שכולל את ה-URL המקורי
-        return {
-            "url": original_url,
-            "company": raw_company,
-            "job_title": raw_title,
-            "suitability_score": 0,
-            "formatted_message": "שגיאה בניתוח המשרה לאחר מספר ניסיונות.",
-            "error": True,
-        }
+        # 3. במקרה של כישלון סופי - זורקים שגיאה כדי שהוורקר יסמן ככישלון
+        raise RuntimeError("Analysis failed after 3 attempts")
 
 
 # --- בלוק בדיקה להרצה ישירה ---

@@ -147,7 +147,7 @@ const JobDashboard = () => {
     .filter(j => 
       !j.is_archived && 
       (j.application_status === 'pending' || !j.application_status) &&
-      (j.status === 'COMPLETED' || ['FAILED_SCRAPE', 'NO_DATA', 'WAITING_FOR_AI', 'ANALYZING'].includes(j.status))
+      j.status === 'COMPLETED'
     )
     .sort((a, b) => new Date(b.analyzed_at || b.created_at) - new Date(a.analyzed_at || a.created_at));
 
