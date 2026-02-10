@@ -17,12 +17,15 @@ const Navbar = ({ activeTab, setActiveTab, counts, searchQuery, setSearchQuery }
         <div className="bg-white/80 backdrop-blur-2xl border border-white/40 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.08)] rounded-[2.5rem] px-8 py-3 flex items-center justify-between transition-all duration-300">
           
           {/* Logo Section - צד ימין */}
-          <div className="flex items-center gap-4 w-1/4">
-            <div className="w-11 h-11 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/30 transition-transform hover:rotate-6 active:scale-95 cursor-pointer">
+          <div 
+            className="flex items-center gap-4 w-1/4 cursor-pointer group/logo"
+            onClick={() => setActiveTab('dashboard')}
+          >
+            <div className="w-11 h-11 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/30 transition-transform group-hover/logo:rotate-6 active:scale-95">
               <Sparkles className="w-5 h-5 text-white" />
             </div>
             <div className="hidden xl:block">
-              <h1 className="text-xl font-black text-slate-800 tracking-tight">JobMatch AI</h1>
+              <h1 className="text-xl font-black text-slate-800 tracking-tight group-hover/logo:text-blue-600 transition-colors">JobMatch AI</h1>
             </div>
           </div>
 
