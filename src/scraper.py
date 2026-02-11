@@ -6,7 +6,6 @@ from typing import Optional
 import requests
 from dotenv import load_dotenv
 
-# ניסיון ייבוא ספריות גיבוי
 try:
     from markdownify import markdownify as md
     from playwright.sync_api import sync_playwright
@@ -22,6 +21,8 @@ class Scraper:
     def __init__(self):
         self.session = requests.Session()
         self.api_key = os.getenv("JINA_API_KEY")
+        self.hireme_token = os.getenv("HIRE_ME_TECH_TOKEN")
+
         if not self.api_key:
             raise ValueError("❌ JINA_API_KEY missing!")
 
@@ -32,18 +33,12 @@ class Scraper:
             "X-With-Shadow-Dom": "true",
         }
 
+    # --- פונקציות עזר לניקוי ותקינות ---
     def is_content_valid(self, text: str) -> bool:
         if not text or len(text) < 250:
             return False
-        invalid_markers = [
-            "access denied",
-            "robot check",
-            "captcha",
-            "404 not found",
-            "page not found",
-        ]
-        low_text = text.lower()
-        return not any(marker in low_text for marker in invalid_markers)
+        invalid_markers = ["access denied", "robot check", "captcha", "404 not found"]
+        return not any(marker in text.lower() for marker in invalid_markers)
 
     def clean_text(self, text: str) -> str:
         if not text:
@@ -53,54 +48,84 @@ class Scraper:
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
+    # --- טיפול מיוחד באתרים ספציפיים (The Resolvers) ---
+
+    def _resolve_hiremetech(self, url: str) -> str:
+        """מזריק טוקן, לוחץ על כפתור ומחזיר את ה-URL הסופי של החברה"""
+        if not HAS_PLAYWRIGHT or not self.hireme_token:
+            print("⚠️ Playwright missing or Token not set in .env")
+            return url
+
+        print(f"🔑 מבצע VIP Access עבור HireMeTech: {url}")
+        try:
+            with sync_playwright() as p:
+                # בשרת נריץ headless=True, בבדיקות מקומיות אפשר False כדי לראות את הקסם
+                browser = p.chromium.launch(headless=True)
+                context = browser.new_context(viewport={"width": 1280, "height": 800})
+                page = context.new_page()
+
+                # 1. הזרקת הטוקן - שים לב לתיקון ל-auth_token
+                page.goto("https://hiremetech.com")
+                page.evaluate(
+                    f"localStorage.setItem('auth_token', '{self.hireme_token}')"
+                )
+
+                # 2. ניווט למשרה והמתנה לכפתור
+                page.goto(url, wait_until="networkidle")
+                apply_button = 'button:has-text("הגש מועמדות")'
+
+                # מחכה שהכפתור יופיע (לפעמים לוקח רגע ל-JS להתרנדר)
+                page.wait_for_selector(apply_button, timeout=10000)
+
+                # 3. לחיצה חכמה
+                # האתר בדרך כלל פותח טאב חדש. נתפוס את ה-Event הזה.
+                with context.expect_page() as new_page_info:
+                    page.click(apply_button)
+
+                new_page = new_page_info.value
+                new_page.wait_for_load_state("networkidle")
+
+                final_url = new_page.url
+                print(f"🚀 הצלחנו! הלינק האמיתי הוא: {final_url}")
+
+                browser.close()
+                return final_url
+        except Exception as e:
+            print(f"❌ נכשל בחילוץ לינק (HireMeTech): {e}")
+            return url
+
+    # --- מנגנוני הסריקה המרכזיים ---
+
     def _scrape_with_playwright(self, url: str) -> Optional[str]:
+        """גיבוי למקרה ש-Jina לא מצליח לקרוא את אתר היעד"""
         if not HAS_PLAYWRIGHT:
             return None
-
-        print(f"🕵️ מפעיל דפדפן מקומי (Playwright) עבור {url}...")
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
-                context = browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                )
-                page = context.new_page()
-
-                # תיקון ייבוא Stealth
-                try:
-                    from playwright_stealth import stealth_sync
-
-                    stealth_sync(page)
-                except Exception:
-                    # אם נכשל, נמשיך בלי stealth
-                    pass
-
+                page = browser.new_page()
                 page.goto(url, timeout=60000, wait_until="networkidle")
-                page.wait_for_timeout(5000)  # המתנה לרינדור של Civi
-
-                all_text = []
-                # חילוץ מהדף הראשי
-                all_text.append(md(page.content()))
-
-                # חילוץ מכל ה-Frames (חשוב לאתרי משרות)
-                for frame in page.frames:
-                    try:
-                        f_content = frame.content()
-                        if len(f_content) > 200:
-                            all_text.append(md(f_content))
-                    except:
-                        continue
-
+                content = md(page.content())
                 browser.close()
-                return "\n\n".join(all_text)
-        except Exception as e:
-            print(f"❌ שגיאה בדפדפן: {e}")
+                return content
+        except:
             return None
 
     def scrape(self, url: str, retries: int = 2) -> Optional[dict]:
-        jina_url = f"https://r.jina.ai/{url}"
+        """הפונקציה המרכזית שאתה קורא לה"""
 
-        # שלב 1: Jina
+        # --- שלב 1: זיהוי וטיפול באתרים ספציפיים ---
+        target_url = url
+        if "hiremetech.com" in url:
+            resolved = self._resolve_hiremetech(url)
+            # אם הלינק השתנה, נמשיך לסרוק את הלינק החדש
+            if resolved != url:
+                target_url = resolved
+
+        # --- שלב 2: סריקה באמצעות Jina (המסלול המהיר והנקי) ---
+        jina_url = f"https://r.jina.ai/{target_url}"
+        print(f"📡 סורק באמצעות Jina: {target_url}")
+
         for attempt in range(retries):
             try:
                 headers = self.headers.copy()
@@ -111,18 +136,20 @@ class Scraper:
                 if res.status_code == 200 and self.is_content_valid(res.text):
                     return {
                         "source": "jina",
+                        "url": target_url,
                         "full_description": self.clean_text(res.text),
                     }
-            except:
-                pass
-            time.sleep(2)
+            except Exception as e:
+                print(f"⚠️ ניסיון Jina {attempt + 1} נכשל: {e}")
+            time.sleep(1)
 
-        # שלב 2: Playwright
-        print("🚨 עובר לגיבוי מקומי...")
-        local_content = self._scrape_with_playwright(url)
+        # --- שלב 3: גיבוי Playwright (המסלול הכבד) ---
+        print("🚨 עובר לגיבוי Playwright מלא...")
+        local_content = self._scrape_with_playwright(target_url)
         if local_content and self.is_content_valid(local_content):
             return {
                 "source": "local_browser",
+                "url": target_url,
                 "full_description": self.clean_text(local_content),
             }
 
@@ -131,17 +158,12 @@ class Scraper:
 
 if __name__ == "__main__":
     scraper = Scraper()
-    # לינקים תקינים לבדיקה (שים לב לתיקון ה-ID ב-Civi)
-    test_urls = [
-        "https://app.civi.co.il/promo/id=598750&src=927",
-        "https://careers.riverside.com/careers/junior-marketing-analyst",
-    ]
+    # בדיקה על לינק של HireMeTech
+    test_url = "https://hiremetech.com/job/106273229"
+    res = scraper.scrape(test_url)
 
-    for url in test_urls:
-        print(f"\n--- בודק: {url} ---")
-        res = scraper.scrape(url)
-        if res:
-            print(f"✅ הצלחה! מקור: {res['source']}")
-            print(f"טקסט (חלקי): {res['full_description'][:200]}...")
-        else:
-            print("🛑 נכשל סופית")
+    if res:
+        print("\n✅ סריקה הושלמה!")
+        print(f"מקור: {res['source']}")
+        print(f"לינק יעד: {res['url']}")
+        print(f"תוכן: {res['full_description'][:200]}...")
