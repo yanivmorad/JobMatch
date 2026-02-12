@@ -122,7 +122,7 @@ async def get_all_jobs() -> List[dict]:
                 if isinstance(analysis, str):
                     try:
                         analysis = json.loads(analysis)
-                    except:
+                    except Exception:
                         analysis = {}
                 if isinstance(analysis, dict):
                     job.update(analysis)
@@ -133,6 +133,29 @@ async def get_all_jobs() -> List[dict]:
 async def delete_job_by_url(url: str):
     pool = await get_pool()
     await pool.execute("DELETE FROM jobs WHERE url = $1", url)
+
+
+async def delete_job_by_id(job_id: int):
+    """Delete a job by its ID"""
+    pool = await get_pool()
+    await pool.execute("DELETE FROM jobs WHERE id = $1", job_id)
+
+
+async def update_job_url(job_id: int, new_url: str):
+    """
+    Update the URL for a job (e.g., when HireMeTech URL resolves to company URL).
+    Also resets status to WAITING_FOR_SCRAPE so the worker picks it up again.
+    """
+    pool = await get_pool()
+    await pool.execute(
+        """
+        UPDATE jobs 
+        SET url = $1, status = 'WAITING_FOR_SCRAPE'
+        WHERE id = $2
+        """,
+        new_url,
+        job_id,
+    )
 
 
 async def update_user_action(url: str, action: str):

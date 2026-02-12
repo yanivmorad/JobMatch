@@ -30,16 +30,72 @@ async def scrape_worker():
         job = await fetch_next_job("WAITING_FOR_SCRAPE", "SCRAPING")
         if job:
             try:
-                logger.info(f"🕷️ Scraping: {job['url']}")
-                data = await asyncio.to_thread(scraper.scrape, job["url"])
+                original_url = job["url"]
+                logger.info(f"🕷️ Processing: {original_url}")
+
+                # --- STEP 1: PRE-SCRAPE URL RESOLUTION CHECK ---
+                # Check if this is a special URL (e.g., HireMeTech) that needs resolution
+                resolved_url = original_url
+
+                if "hiremetech" in original_url:
+                    logger.info("🔍 Detected HireMeTech URL, resolving...")
+                    # Use the resolver to get the actual company URL
+                    resolved_url = await asyncio.to_thread(
+                        scraper.resolver.resolve, original_url
+                    )
+
+                    # --- STEP 2: UPDATE URL IN DATABASE IF RESOLVED ---
+                    if resolved_url != original_url:
+                        logger.info(f"✅ Resolved: {original_url} → {resolved_url}")
+
+                        # Import here to avoid circular dependency
+                        from db.jobs_repository import (
+                            delete_job_by_id,
+                            get_job_by_url,
+                            update_job_url,
+                        )
+
+                        # Check if the resolved URL already exists in our database
+                        existing_job = await get_job_by_url(resolved_url)
+
+                        if existing_job:
+                            logger.warning(
+                                f"⏭️ DUPLICATE DETECTED: Resolved URL '{resolved_url}' "
+                                f"already exists in DB (Job ID: {existing_job['id']}). "
+                                f"Deleting duplicate job ID {job['id']}."
+                            )
+                            # Delete the duplicate job
+                            await delete_job_by_id(job["id"])
+                            # Skip to next job without scraping
+                            continue
+                        else:
+                            # Update the job URL in the database
+                            logger.info(
+                                f"📝 Updating job URL in database: {original_url} → {resolved_url}"
+                            )
+                            await update_job_url(job["id"], resolved_url)
+                            # Let the next iteration pick up the updated URL
+                            logger.info(
+                                "✓ URL updated. Continuing to next job - worker will pick this up again with new URL."
+                            )
+                            continue
+
+                # --- STEP 3: SCRAPE THE URL ---
+                # Only reach here if URL doesn't need resolution or is already resolved
+                logger.info(f"🕷️ Scraping: {original_url}")
+                data = await asyncio.to_thread(scraper.scrape, original_url)
 
                 if data:
+                    # Use the resolved URL for database storage
+                    final_url = data.get("resolved_url", original_url)
+
                     await finish_scrape(
                         job["id"],
                         data.get("company", "Unknown"),
                         data.get("job_title", "Unknown"),
                         data.get("full_description", ""),
                     )
+                    logger.info(f"✅ Scrape complete for: {final_url}")
                 else:
                     await mark_failed(
                         job["id"], "NO_DATA", "Scraper returned empty data"

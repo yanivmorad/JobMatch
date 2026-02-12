@@ -1,10 +1,15 @@
+import logging
 import os
-import re
 import time
 from typing import Optional
 
 import requests
 from dotenv import load_dotenv
+
+from scraper_service.resolvers import URLResolver
+
+# Import utility functions from the new modular structure
+from scraper_service.utils import clean_text, is_content_valid
 
 try:
     from markdownify import markdownify as md
@@ -14,10 +19,21 @@ try:
 except ImportError:
     HAS_PLAYWRIGHT = False
 
+# הגדרת לוגים בסיסית שנראה מה קורה בטרמינל
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - [SCRAPER] - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
 load_dotenv()
 
 
 class Scraper:
+    """
+    Main scraper class that coordinates URL resolution and content scraping.
+    Now uses modular components from scraper_service package.
+    """
+
     def __init__(self):
         self.session = requests.Session()
         self.api_key = os.getenv("JINA_API_KEY")
@@ -33,71 +49,11 @@ class Scraper:
             "X-With-Shadow-Dom": "true",
         }
 
-    # --- פונקציות עזר לניקוי ותקינות ---
-    def is_content_valid(self, text: str) -> bool:
-        if not text or len(text) < 250:
-            return False
-        invalid_markers = ["access denied", "robot check", "captcha", "404 not found"]
-        return not any(marker in text.lower() for marker in invalid_markers)
-
-    def clean_text(self, text: str) -> str:
-        if not text:
-            return ""
-        text = re.sub(r"^>?\s*https?://[^\n]+\n?", "", text, flags=re.MULTILINE)
-        text = re.sub(r"!\[.*?\]\(.*?\)", "", text)
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        return text.strip()
-
-    # --- טיפול מיוחד באתרים ספציפיים (The Resolvers) ---
-
-    def _resolve_hiremetech(self, url: str) -> str:
-        """מזריק טוקן, לוחץ על כפתור ומחזיר את ה-URL הסופי של החברה"""
-        if not HAS_PLAYWRIGHT or not self.hireme_token:
-            print("⚠️ Playwright missing or Token not set in .env")
-            return url
-
-        print(f"🔑 מבצע VIP Access עבור HireMeTech: {url}")
-        try:
-            with sync_playwright() as p:
-                # בשרת נריץ headless=True, בבדיקות מקומיות אפשר False כדי לראות את הקסם
-                browser = p.chromium.launch(headless=True)
-                context = browser.new_context(viewport={"width": 1280, "height": 800})
-                page = context.new_page()
-
-                # 1. הזרקת הטוקן - שים לב לתיקון ל-auth_token
-                page.goto("https://hiremetech.com")
-                page.evaluate(
-                    f"localStorage.setItem('auth_token', '{self.hireme_token}')"
-                )
-
-                # 2. ניווט למשרה והמתנה לכפתור
-                page.goto(url, wait_until="networkidle")
-                apply_button = 'button:has-text("הגש מועמדות")'
-
-                # מחכה שהכפתור יופיע (לפעמים לוקח רגע ל-JS להתרנדר)
-                page.wait_for_selector(apply_button, timeout=10000)
-
-                # 3. לחיצה חכמה
-                # האתר בדרך כלל פותח טאב חדש. נתפוס את ה-Event הזה.
-                with context.expect_page() as new_page_info:
-                    page.click(apply_button)
-
-                new_page = new_page_info.value
-                new_page.wait_for_load_state("networkidle")
-
-                final_url = new_page.url
-                print(f"🚀 הצלחנו! הלינק האמיתי הוא: {final_url}")
-
-                browser.close()
-                return final_url
-        except Exception as e:
-            print(f"❌ נכשל בחילוץ לינק (HireMeTech): {e}")
-            return url
-
-    # --- מנגנוני הסריקה המרכזיים ---
+        # Initialize the URL resolver with tokens
+        self.resolver = URLResolver(hireme_token=self.hireme_token)
 
     def _scrape_with_playwright(self, url: str) -> Optional[str]:
-        """גיבוי למקרה ש-Jina לא מצליח לקרוא את אתר היעד"""
+        """Backup local scraper if Jina fails"""
         if not HAS_PLAYWRIGHT:
             return None
         try:
@@ -108,23 +64,38 @@ class Scraper:
                 content = md(page.content())
                 browser.close()
                 return content
-        except:
+        except Exception:
             return None
 
     def scrape(self, url: str, retries: int = 2) -> Optional[dict]:
-        """הפונקציה המרכזית שאתה קורא לה"""
+        """
+        The entry point. Detects if specific site handling is needed,
+        resolves the real URL, and then scrapes the content.
 
-        # --- שלב 1: זיהוי וטיפול באתרים ספציפיים ---
-        target_url = url
-        if "hiremetech.com" in url:
-            resolved = self._resolve_hiremetech(url)
-            # אם הלינק השתנה, נמשיך לסרוק את הלינק החדש
-            if resolved != url:
-                target_url = resolved
+        Args:
+            url: The URL to scrape
+            retries: Number of retry attempts for Jina scraping
 
-        # --- שלב 2: סריקה באמצעות Jina (המסלול המהיר והנקי) ---
+        Returns:
+            Dict with scraping results or None if failed:
+            {
+                "source": "jina" or "local_browser",
+                "original_url": original input URL,
+                "resolved_url": final URL that was scraped,
+                "full_description": cleaned text content
+            }
+        """
+
+        # --- STEP 1: RESOLVE (Special Handling) ---
+        # Use the URLResolver to handle special sites like HireMeTech
+        target_url = self.resolver.resolve(url)
+
+        if target_url != url:
+            logger.info(f"URL Resolved: {url} → {target_url}")
+
+        # --- STEP 2: SCRAPE WITH JINA ---
         jina_url = f"https://r.jina.ai/{target_url}"
-        print(f"📡 סורק באמצעות Jina: {target_url}")
+        logger.info(f"📡 Scraping via Jina: {target_url}")
 
         for attempt in range(retries):
             try:
@@ -133,24 +104,26 @@ class Scraper:
                     headers["X-No-Cache"] = "true"
 
                 res = self.session.get(jina_url, headers=headers, timeout=40)
-                if res.status_code == 200 and self.is_content_valid(res.text):
+                if res.status_code == 200 and is_content_valid(res.text):
                     return {
                         "source": "jina",
-                        "url": target_url,
-                        "full_description": self.clean_text(res.text),
+                        "original_url": url,
+                        "resolved_url": target_url,
+                        "full_description": clean_text(res.text),
                     }
             except Exception as e:
-                print(f"⚠️ ניסיון Jina {attempt + 1} נכשל: {e}")
+                logger.warning(f"Jina attempt {attempt + 1} failed: {e}")
             time.sleep(1)
 
-        # --- שלב 3: גיבוי Playwright (המסלול הכבד) ---
-        print("🚨 עובר לגיבוי Playwright מלא...")
+        # --- STEP 3: BACKUP SCRAPER (Local Playwright) ---
+        logger.warning("🚨 Jina failed, falling back to local Playwright...")
         local_content = self._scrape_with_playwright(target_url)
-        if local_content and self.is_content_valid(local_content):
+        if local_content and is_content_valid(local_content):
             return {
                 "source": "local_browser",
-                "url": target_url,
-                "full_description": self.clean_text(local_content),
+                "original_url": url,
+                "resolved_url": target_url,
+                "full_description": clean_text(local_content),
             }
 
         return None
@@ -158,12 +131,16 @@ class Scraper:
 
 if __name__ == "__main__":
     scraper = Scraper()
-    # בדיקה על לינק של HireMeTech
+    # Test with HireMeTech link
     test_url = "https://hiremetech.com/job/106273229"
     res = scraper.scrape(test_url)
 
     if res:
-        print("\n✅ סריקה הושלמה!")
-        print(f"מקור: {res['source']}")
-        print(f"לינק יעד: {res['url']}")
-        print(f"תוכן: {res['full_description'][:200]}...")
+        print("\n" + "=" * 40)
+        print("✅ SCRAPE COMPLETE")
+        print(f"Source: {res['source']}")
+        print(f"Resolved URL: {res['resolved_url']}")
+        print(f"Content Preview: {res['full_description'][:300]}...")
+        print("=" * 40)
+    else:
+        print("\n🛑 SCRAPE FAILED")
