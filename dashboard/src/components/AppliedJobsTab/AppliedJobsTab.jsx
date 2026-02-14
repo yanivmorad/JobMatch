@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Briefcase } from 'lucide-react';
-import JobModal from '../JobCard/JobModal';
+import JobModal from '../JobModal/JobModal';
 import JobStats from './JobStats';
 import JobTableRow from './JobTableRow';
 

@@ -3,7 +3,7 @@ import {
   Trash2, CheckCircle, XCircle, ArchiveRestore, Clock, RotateCcw, History, FolderOpen, Building2, AlertCircle, ChevronDown
 } from 'lucide-react';
 import { taskService } from '../services/taskService';
-import JobModal from './JobCard/JobModal';
+import JobModal from './JobModal/JobModal';
 import { STATUS_CONFIG } from '../constants/statusConfig';
 
 const HistoryTab = ({ jobs, onRefresh, onRestore, onUpdateStatus, onRetry }) => {

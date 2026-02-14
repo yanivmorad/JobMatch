@@ -1,6 +1,6 @@
 import React from 'react';
 import { Building2, MapPin, Info, Target, TrendingUp, Calendar, ChevronDown } from 'lucide-react';
-import JobModal from './JobModal';
+import JobModal from '../JobModal/JobModal';
 import { STATUS_CONFIG } from '../../constants/statusConfig';
 
 const JobCard = ({ job, onAction, onDelete, onUpdateStatus, onRetry }) => {
