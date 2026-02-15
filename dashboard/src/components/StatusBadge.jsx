@@ -5,17 +5,28 @@ const StatusBadge = ({ status }) => {
   const config = {
     NEW: { 
       style: "bg-gray-100 text-gray-500",
-      label: "בטעינה",
+      label: "בתור",
       icon: Clock
     },
+    PENDING_RESOLVE: { 
+      style: "bg-amber-50 text-amber-600",
+      label: "ממתין לזיהוי",
+      icon: Clock
+    },
+    RESOLVING: { 
+      style: "bg-amber-100 text-amber-700",
+      label: "מזהה כתובת...",
+      icon: Loader2,
+      animate: "animate-spin"
+    },
     WAITING_FOR_SCRAPE: { 
-      style: "bg-gray-100 text-gray-500",
+      style: "bg-blue-50 text-blue-500",
       label: "ממתין לסריקה",
       icon: Clock
     },
     SCRAPING: { 
-      style: "bg-blue-50 text-blue-600",
-      label: "בסריקת דף",
+      style: "bg-blue-100 text-blue-600",
+      label: "בסריקת דף...",
       icon: Loader2,
       animate: "animate-spin"
     },
@@ -26,7 +37,7 @@ const StatusBadge = ({ status }) => {
     },
     ANALYZING: { 
       style: "bg-purple-50 text-purple-600",
-      label: "ניתוח AI",
+      label: "ניתוח AI...",
       icon: Sparkles,
       animate: "animate-pulse"
     },
@@ -34,6 +45,11 @@ const StatusBadge = ({ status }) => {
       style: "bg-emerald-50 text-emerald-600",
       label: "הושלם",
       icon: CheckCircle
+    },
+    FAILED_RESOLVE: { 
+      style: "bg-rose-50 text-rose-600",
+      label: "שגיאת זיהוי",
+      icon: AlertCircle
     },
     FAILED_SCRAPE: { 
       style: "bg-rose-50 text-rose-600",
@@ -48,6 +64,11 @@ const StatusBadge = ({ status }) => {
     NO_DATA: { 
       style: "bg-amber-50 text-amber-600",
       label: "אין מידע",
+      icon: AlertCircle
+    },
+    DUPLICATE: { 
+      style: "bg-slate-100 text-slate-500",
+      label: "כבר קיים",
       icon: AlertCircle
     },
   };

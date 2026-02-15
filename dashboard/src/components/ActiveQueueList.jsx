@@ -13,15 +13,30 @@ const QueueItem = ({ job, onRetry }) => {
 
   const getStatusConfig = (status) => {
     switch (status) {
-      case 'NEW':
-      case 'PENDING': 
-      case 'WAITING':
+      case 'PENDING_RESOLVE':
+        return { 
+          text: 'ממתין לזיהוי', 
+          color: 'bg-amber-500', 
+          lightColor: 'bg-amber-50',
+          textColor: 'text-amber-600',
+          icon: <Clock size={16} />,
+          loading: false
+        };
+      case 'RESOLVING':
+        return { 
+          text: 'מזהה כתובת...', 
+          color: 'bg-amber-600', 
+          lightColor: 'bg-amber-50',
+          textColor: 'text-amber-700',
+          icon: <Search size={16} className="animate-pulse" />,
+          loading: true
+        };
       case 'WAITING_FOR_SCRAPE':
         return { 
           text: 'ממתין לסריקה', 
-          color: 'bg-slate-500', 
-          lightColor: 'bg-slate-100',
-          textColor: 'text-slate-600',
+          color: 'bg-blue-400', 
+          lightColor: 'bg-blue-50',
+          textColor: 'text-blue-600',
           icon: <Clock size={16} />,
           loading: false
         };
@@ -55,6 +70,15 @@ const QueueItem = ({ job, onRetry }) => {
           textColor: 'text-indigo-600',
           icon: <Brain size={16} className="animate-pulse" />,
           loading: true
+        };
+      case 'DUPLICATE':
+        return { 
+          text: 'כבר קיים במערכת', 
+          color: 'bg-slate-400', 
+          lightColor: 'bg-slate-100',
+          textColor: 'text-slate-500',
+          icon: <Clock size={16} />,
+          loading: false
         };
       default:
         return { 
