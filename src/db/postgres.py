@@ -46,23 +46,81 @@ async def init_db(conn):
         "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'jobs')"
     )
 
+    # --- MIGRATION: Ensure all job_status enum values exist ---
+    # Note: ADD VALUE IF NOT EXISTS requires Postgres 12+
+    await conn.execute("""
+        DO $$ 
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'job_status') THEN
+                CREATE TYPE job_status AS ENUM (
+                    'NEW', 'PENDING_RESOLVE', 'RESOLVING', 'WAITING_FOR_SCRAPE', 
+                    'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING', 'COMPLETED', 
+                    'FAILED_RESOLVE', 'FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA',
+                    'DUPLICATE'
+                );
+            ELSE
+                BEGIN
+                    ALTER TYPE job_status ADD VALUE IF NOT EXISTS 'PENDING_RESOLVE';
+                EXCEPTION WHEN others THEN NULL; END;
+                
+                BEGIN
+                    ALTER TYPE job_status ADD VALUE IF NOT EXISTS 'RESOLVING';
+                EXCEPTION WHEN others THEN NULL; END;
+                
+                BEGIN
+                    ALTER TYPE job_status ADD VALUE IF NOT EXISTS 'FAILED_RESOLVE';
+                EXCEPTION WHEN others THEN NULL; END;
+
+                BEGIN
+                    ALTER TYPE job_status ADD VALUE IF NOT EXISTS 'DUPLICATE';
+                EXCEPTION WHEN others THEN NULL; END;
+            END IF;
+        END $$;
+    """)
+
+    # --- MIGRATION: Ensure updated_at column and trigger exist ---
+    await conn.execute("""
+        DO $$ 
+        BEGIN
+            -- 1. Check for column
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'jobs' AND column_name = 'updated_at') THEN
+                ALTER TABLE jobs ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+            END IF;
+
+            -- 2. Create function
+            CREATE OR REPLACE FUNCTION update_updated_at_column()
+            RETURNS TRIGGER AS $inner$
+            BEGIN
+                NEW.updated_at = NOW();
+                RETURN NEW;
+            END;
+            $inner$ language 'plpgsql';
+
+            -- 3. Create trigger
+            IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_jobs_updated_at') THEN
+                CREATE TRIGGER update_jobs_updated_at
+                BEFORE UPDATE ON jobs
+                FOR EACH ROW
+                EXECUTE FUNCTION update_updated_at_column();
+            END IF;
+        END $$;
+    """)
+
     if not table_exists:
         logger.info("🛠️ Initializing Database schema...")
 
-        # 1. יצירת ה-Enum
+        # 2. יצירת פונקציית טריגר לעדכון updated_at
         await conn.execute("""
-            DO $$ 
+            CREATE OR REPLACE FUNCTION update_updated_at_column()
+            RETURNS TRIGGER AS $$
             BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'job_status') THEN
-                    CREATE TYPE job_status AS ENUM (
-                        'NEW', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 
-                        'ANALYZING', 'COMPLETED', 'FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA'
-                    );
-                END IF;
-            END $$;
+                NEW.updated_at = NOW();
+                RETURN NEW;
+            END;
+            $$ language 'plpgsql';
         """)
 
-        # 2. יצירת הטבלה
+        # 3. יצירת הטבלה
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS jobs (
                 id SERIAL PRIMARY KEY,
@@ -77,13 +135,26 @@ async def init_db(conn):
                 is_archived BOOLEAN DEFAULT FALSE,
                 error_log TEXT,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 scraped_at TIMESTAMP WITH TIME ZONE,
                 analyzed_at TIMESTAMP WITH TIME ZONE
             );
         """)
 
-        # 3. אינדקס
+        # 4. יצירת הטריגר
+        await conn.execute("""
+            DROP TRIGGER IF EXISTS update_jobs_updated_at ON jobs;
+            CREATE TRIGGER update_jobs_updated_at
+            BEFORE UPDATE ON jobs
+            FOR EACH ROW
+            EXECUTE FUNCTION update_updated_at_column();
+        """)
+
+        # 5. אינדקסים
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);"
         )
-        logger.info("✅ Database schema is ready.")
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs(updated_at);"
+        )
+        logger.info("✅ Database schema is ready with updated_at trigger.")

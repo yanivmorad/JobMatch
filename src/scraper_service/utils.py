@@ -12,7 +12,7 @@ def is_content_valid(text: str) -> bool:
     Returns:
         True if content appears valid, False otherwise
     """
-    if not text or len(text) < 250:
+    if not text or len(text) < 150:
         return False
     invalid_markers = ["access denied", "robot check", "captcha", "404 not found"]
     return not any(marker in text.lower() for marker in invalid_markers)

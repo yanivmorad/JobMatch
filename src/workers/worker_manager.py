@@ -1,4 +1,3 @@
-# src/workers/worker_manager.py
 import asyncio
 import logging
 
@@ -6,133 +5,162 @@ from db.jobs_repository import (
     fetch_next_job,
     finish_analysis,
     finish_scrape,
+    get_job_by_url,
     mark_failed,
     reset_stuck_jobs,
+    update_job_after_resolution,
 )
+from scraper_service.resolvers import URLResolver  # ייבוא ישיר
 from services.file_utils import CONTEXT_PATH, RESUME_PATH, read_text_file
 
-# נסה לייבא את המנועים
+# טיפול גמיש בייבוא מנועים
 try:
     from engine import JobAnalyzer
-    from scraper import Scraper
+    from scraper_service.scraper import Scraper
 except ImportError:
     from src.engine import JobAnalyzer
-    from src.scraper import Scraper
+    from src.scraper_service.scraper import Scraper
 
 logger = logging.getLogger("Workers")
 
 
+async def resolver_worker():
+    logger.info("🔍 Resolver Worker started")
+    # מאתחלים רק את ה-Resolver, בלי כל ה-Scraper הכבד
+    resolver = URLResolver()
+
+    while True:
+        job = await fetch_next_job("PENDING_RESOLVE", "RESOLVING")
+        if job:
+            job_id = job["id"]
+            original_url = job["url"]
+            try:
+                # ה-Resolver מחליט אם הלינק דורש טיפול או לא
+                resolved_url = await asyncio.wait_for(
+                    asyncio.to_thread(resolver.resolve, original_url),
+                    timeout=60,
+                )
+
+                # לוגיקת כפילויות (נשארת אותו דבר, אבל עכשיו היא נקייה יותר)
+                if resolved_url and resolved_url != original_url:
+                    existing = await get_job_by_url(resolved_url)
+                    if existing:
+                        await mark_failed(
+                            job_id, "DUPLICATE", f"Exists as ID: {existing['id']}"
+                        )
+                        continue
+
+                    await update_job_after_resolution(
+                        job_id, resolved_url, "WAITING_FOR_SCRAPE"
+                    )
+                else:
+                    # הלינק כבר היה "נקי" או שלא נמצא פיענוח
+                    await update_job_after_resolution(
+                        job_id, original_url, "WAITING_FOR_SCRAPE"
+                    )
+
+            except Exception as e:
+                await mark_failed(job_id, "FAILED_RESOLVE", str(e))
+        else:
+            await asyncio.sleep(5)
+
+
 async def scrape_worker():
-    logger.info("🕷️ Scraper Worker started")
+    """
+    שלב 2: חילוץ התוכן (Text/Markdown) מאתר המשרה.
+    סטטוס: WAITING_FOR_SCRAPE -> WAITING_FOR_AI
+    יכולת: הופכת HTML למבנה נתונים נקי (חברה, תיאור, טייטל).
+    """
+    logger.info("🕷️ Scraper Worker התחיל לעבוד")
     scraper = Scraper()
 
     while True:
         job = await fetch_next_job("WAITING_FOR_SCRAPE", "SCRAPING")
         if job:
+            job_id = job["id"]
+            url = job["url"]
             try:
-                original_url = job["url"]
-                logger.info(f"🕷️ Processing: {original_url}")
+                logger.info(f"🌐 סורק משרה {job_id}: {url}")
 
-                # --- STEP 1: PRE-SCRAPE URL RESOLUTION CHECK ---
-                # Check if this is a special URL (e.g., HireMeTech) that needs resolution
-                resolved_url = original_url
+                # הרצת ה-Scraper (מנסה Jina ואז Playwright)
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(scraper.scrape, url), timeout=60
+                )
 
-                if "hiremetech" in original_url:
-                    logger.info("🔍 Detected HireMeTech URL, resolving...")
-                    # Use the resolver to get the actual company URL
-                    resolved_url = await asyncio.to_thread(
-                        scraper.resolver.resolve, original_url
-                    )
-
-                    # --- STEP 2: UPDATE URL IN DATABASE IF RESOLVED ---
-                    if resolved_url != original_url:
-                        logger.info(f"✅ Resolved: {original_url} → {resolved_url}")
-
-                        # Import here to avoid circular dependency
-                        from db.jobs_repository import (
-                            delete_job_by_id,
-                            get_job_by_url,
-                            update_job_url,
-                        )
-
-                        # Check if the resolved URL already exists in our database
-                        existing_job = await get_job_by_url(resolved_url)
-
-                        if existing_job:
-                            logger.warning(
-                                f"⏭️ DUPLICATE DETECTED: Resolved URL '{resolved_url}' "
-                                f"already exists in DB (Job ID: {existing_job['id']}). "
-                                f"Deleting duplicate job ID {job['id']}."
-                            )
-                            # Delete the duplicate job
-                            await delete_job_by_id(job["id"])
-                            # Skip to next job without scraping
-                            continue
-                        else:
-                            # Update the job URL in the database
-                            logger.info(
-                                f"📝 Updating job URL in database: {original_url} → {resolved_url}"
-                            )
-                            await update_job_url(job["id"], resolved_url)
-                            # Let the next iteration pick up the updated URL
-                            logger.info(
-                                "✓ URL updated. Continuing to next job - worker will pick this up again with new URL."
-                            )
-                            continue
-
-                # --- STEP 3: SCRAPE THE URL ---
-                # Only reach here if URL doesn't need resolution or is already resolved
-                logger.info(f"🕷️ Scraping: {original_url}")
-                data = await asyncio.to_thread(scraper.scrape, original_url)
-
-                if data:
-                    # Use the resolved URL for database storage
-                    final_url = data.get("resolved_url", original_url)
-
+                if result and result.get("full_description"):
                     await finish_scrape(
-                        job["id"],
-                        data.get("company", "Unknown"),
-                        data.get("job_title", "Unknown"),
-                        data.get("full_description", ""),
+                        job_id,
+                        result.get("company", "Unknown"),
+                        result.get("job_title", "Unknown"),
+                        result.get("full_description", ""),
                     )
-                    logger.info(f"✅ Scrape complete for: {final_url}")
+                    logger.info(f"✅ סריקה הושלמה עבור משרה {job_id}. עובר לניתוח AI.")
                 else:
                     await mark_failed(
-                        job["id"], "NO_DATA", "Scraper returned empty data"
+                        job_id, "NO_DATA", "הסורק לא הצליח לחלץ תיאור משרה"
                     )
+
+            except asyncio.TimeoutError:
+                await mark_failed(
+                    job_id, "FAILED_SCRAPE", "Timeout (60s) during scraping"
+                )
             except Exception as e:
-                logger.error(f"❌ Scrape error for {job['url']}: {e}")
-                await mark_failed(job["id"], "FAILED_SCRAPE", str(e))
+                logger.error(f"❌ שגיאה בסריקת משרה {job_id}: {e}")
+                await mark_failed(job_id, "FAILED_SCRAPE", str(e))
         else:
-            await asyncio.sleep(2)
+            await asyncio.sleep(5)
 
 
 async def ai_worker():
-    logger.info("🤖 AI Worker started")
+    """
+    שלב 3: ניתוח המשרה מול קורות החיים באמצעות LLM.
+    סטטוס: WAITING_FOR_AI -> COMPLETED
+    יכולת: הפקת ציון התאמה, סיכום בעברית ורשימת יתרונות/חסרונות.
+    """
+    logger.info("🤖 AI Worker התחיל לעבוד")
     analyzer = JobAnalyzer()
 
     while True:
         job = await fetch_next_job("WAITING_FOR_AI", "ANALYZING")
         if job:
+            job_id = job["id"]
             try:
-                logger.info(f"🤖 Analyzing Job ID: {job['id']}")
+                logger.info(f"🧠 מנתח משרה {job_id} באמצעות AI...")
+
+                # טעינת קבצי עזר (קורות חיים והקשר נוסף)
                 resume = read_text_file(RESUME_PATH)
                 context = read_text_file(CONTEXT_PATH)
 
-                # הרצת הניתוח
-                result = await asyncio.to_thread(analyzer.analyze, resume, context, job)
-                await finish_analysis(job["id"], result)
-                logger.info(f"✅ Analysis complete for Job ID: {job['id']}")
+                # שליחה לניתוח (לוקח הכי הרבה זמן)
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(analyzer.analyze, resume, context, job),
+                    timeout=90,  # זמן ארוך יותר ל-AI
+                )
+
+                await finish_analysis(job_id, result)
+                logger.info(f"✨ ניתוח AI הושלם עבור משרה {job_id}!")
+
+            except asyncio.TimeoutError:
+                await mark_failed(job_id, "FAILED_ANALYSIS", "AI Timeout")
             except Exception as e:
-                logger.error(f"❌ AI error for Job ID {job['id']}: {e}")
-                await mark_failed(job["id"], "FAILED_ANALYSIS", str(e))
+                logger.error(f"❌ שגיאה בניתוח AI של משרה {job_id}: {e}")
+                await mark_failed(job_id, "FAILED_ANALYSIS", str(e))
         else:
-            await asyncio.sleep(2)
+            await asyncio.sleep(5)
 
 
 async def start_background_workers():
-    """פונקציה שתופעל כשהשרת עולה"""
-    logger.info("🧹 Cleaning up stuck jobs from previous run...")
+    """
+    פונקציית הניהול הראשית:
+    1. מאפסת משרות שנתקעו בגלל קריסה קודמת.
+    2. מפעילה את כל ה-Workers כמשימות רקע אסינכרוניות.
+    """
+    logger.info("🧹 מנקה משרות תקועות ומפעיל את הצינור...")
     await reset_stuck_jobs()
+
+    # הפעלה במקביל של כל יחידות העבודה
+    asyncio.create_task(resolver_worker())
     asyncio.create_task(scrape_worker())
     asyncio.create_task(ai_worker())
+
+    logger.info("🚀 כל ה-Workers באוויר (Resolver, Scraper, AI)")
