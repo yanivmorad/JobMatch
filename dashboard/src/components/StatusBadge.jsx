@@ -10,14 +10,14 @@ const StatusBadge = ({ status }) => {
     },
     PENDING_RESOLVE: { 
       style: "bg-amber-50 text-amber-600",
-      label: "ממתין לזיהוי",
+      label: "מפענח קישור",
       icon: Clock
     },
     RESOLVING: { 
       style: "bg-amber-100 text-amber-700",
-      label: "מזהה כתובת...",
+      label: "בבדיקת כתובת",
       icon: Loader2,
-      animate: "animate-spin"
+      animate: "animate-pulse"
     },
     WAITING_FOR_SCRAPE: { 
       style: "bg-blue-50 text-blue-500",
@@ -26,24 +26,24 @@ const StatusBadge = ({ status }) => {
     },
     SCRAPING: { 
       style: "bg-blue-100 text-blue-600",
-      label: "בסריקת דף...",
+      label: "סורק תוכן",
       icon: Loader2,
-      animate: "animate-spin"
+      animate: "animate-pulse"
     },
     WAITING_FOR_AI: { 
       style: "bg-indigo-50 text-indigo-600",
-      label: "ממתין לניתוח",
+      label: "ממתין ל-AI",
       icon: Sparkles
     },
     ANALYZING: { 
       style: "bg-purple-50 text-purple-600",
-      label: "ניתוח AI...",
+      label: "מנתח משרה",
       icon: Sparkles,
       animate: "animate-pulse"
     },
     COMPLETED: { 
       style: "bg-emerald-50 text-emerald-600",
-      label: "הושלם",
+      label: "ניתוח מושלם",
       icon: CheckCircle
     },
     FAILED_RESOLVE: { 
@@ -67,8 +67,8 @@ const StatusBadge = ({ status }) => {
       icon: AlertCircle
     },
     DUPLICATE: { 
-      style: "bg-slate-100 text-slate-500",
-      label: "כבר קיים",
+      style: "bg-amber-100 text-amber-700",
+      label: "משרה כפולה (כבר קיימת במערכת)",
       icon: AlertCircle
     },
   };

@@ -32,7 +32,7 @@ const JobDashboard = () => {
   // --- 2. Polling (רענון אוטומטי למשרות בתהליך) ---
   useEffect(() => {
     const hasPending = jobs.some(j => 
-      ['NEW', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING'].includes(j.status)
+      ['NEW', 'PENDING_RESOLVE', 'RESOLVING', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING'].includes(j.status)
     );
 
     let interval = null;
@@ -140,7 +140,7 @@ const JobDashboard = () => {
   });
 
   const pendingJobs = filteredJobs.filter(j =>
-    ['NEW', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING', 'FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA'].includes(j.status)
+    ['NEW', 'PENDING_RESOLVE', 'RESOLVING', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING', 'FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA', 'DUPLICATE'].includes(j.status)
   );
 
   const activeJobs = filteredJobs

@@ -76,51 +76,73 @@ const AttentionRequiredList = ({
               </div>
             ))}
             
-            {/* משרות שנכשלו */}
-            {failedJobs.map((job, idx) => (
-              <div key={idx} className="bg-white border border-rose-100 shadow-sm rounded-2xl p-5 flex flex-col gap-4 relative overflow-hidden group hover:shadow-md transition-all">
-                <div className="absolute left-0 top-0 bottom-0 w-1 bg-rose-400"></div>
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-rose-600 text-[10px] font-black uppercase tracking-widest">
-                      {job.status === 'FAILED_SCRAPE' ? 'נכשל בסריקה' : 
-                       job.status === 'FAILED_ANALYSIS' ? 'נכשל בניתוח AI' : 
-                       'אין מידע'}
-                    </span>
-                    <a href={job.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 text-xs flex items-center gap-1">
-                      קישור <ExternalLink size={10} />
-                    </a>
-                  </div>
-                  <div className="text-slate-800 font-bold text-sm">
-                    {job.company !== 'Unknown' ? job.company : job.job_title !== 'Unknown' ? job.job_title : 'משרה לא מזוהה'}
-                  </div>
-                  
-                  {/* הצגת הודעת השגיאה */}
-                  {job.error_log && (
-                    <div className="bg-rose-50/50 border border-rose-200/50 rounded-lg p-3 mt-1">
-                      <p className="text-rose-800 text-xs font-medium leading-relaxed break-words">
-                        <span className="font-bold">שגיאה: </span>
-                        {job.error_log}
-                      </p>
+            {/* משרות שנכשלו או כפולות מה-Pipeline */}
+            {failedJobs.map((job, idx) => {
+              const isDuplicate = job.status === 'DUPLICATE';
+              
+              return (
+                <div 
+                  key={idx} 
+                  className={`bg-white border ${isDuplicate ? 'border-amber-100' : 'border-rose-100'} shadow-sm rounded-2xl p-5 flex flex-col gap-4 relative overflow-hidden group hover:shadow-md transition-all`}
+                  dir="rtl"
+                >
+                  <div className={`absolute left-0 top-0 bottom-0 w-1 ${isDuplicate ? 'bg-amber-400' : 'bg-rose-400'}`}></div>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className={`${isDuplicate ? 'text-amber-600' : 'text-rose-600'} text-[10px] font-black uppercase tracking-widest`}>
+                        {isDuplicate ? 'משרה כפולה (כבר קיימת במערכת)' : 
+                         job.status === 'FAILED_SCRAPE' ? 'נכשל בסריקה' : 
+                         job.status === 'FAILED_ANALYSIS' ? 'נכשל בניתוח AI' : 
+                         'אין מידע'}
+                      </span>
+                      <a href={job.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 text-xs flex items-center gap-1">
+                        קישור <ExternalLink size={10} />
+                      </a>
                     </div>
-                  )}
+                    <div className="text-slate-800 font-bold text-sm">
+                      {job.company !== 'Unknown' ? job.company : job.job_title !== 'Unknown' ? job.job_title : 'משרה לא מזוהה'}
+                    </div>
+                    
+                    {/* הצגת הודעת השגיאה או פרטי כפילות */}
+                    {(job.error_log || isDuplicate) && (
+                      <div className={`${isDuplicate ? 'bg-amber-50/50 border-amber-200/50' : 'bg-rose-50/50 border-rose-200/50'} border rounded-lg p-3 mt-1`}>
+                        <p className={`${isDuplicate ? 'text-amber-800' : 'text-rose-800'} text-xs font-medium leading-relaxed break-words`}>
+                          <span className="font-bold">{isDuplicate ? 'פרטים: ' : 'שגיאה: '}</span>
+                          {job.error_log || 'המשרה כבר קיימת במערכת (לינק זהה או מזוהה כחלופי)'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    {isDuplicate ? (
+                      <button 
+                        onClick={() => handleRescan(job.url)} 
+                        className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold hover:bg-blue-100 transition-colors"
+                      >
+                        <RefreshCw size={14} /> סרוק מחדש
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={() => { setJobToFix(job); setIsFixModalOpen(true); }} 
+                        className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-rose-50 text-rose-700 text-xs font-bold hover:bg-rose-100 transition-colors"
+                      >
+                        <Edit3 size={14} /> תיקון ידני
+                      </button>
+                    )}
+                    
+                    {!isDuplicate && (
+                      <button onClick={() => handleRetry(job.url)} className="p-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors">
+                        <RefreshCw size={14} />
+                      </button>
+                    )}
+                    
+                    <button onClick={() => handleCancel(job.url)} className="p-2 rounded-lg bg-slate-50 text-slate-400 hover:text-rose-600 transition-colors">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => { setJobToFix(job); setIsFixModalOpen(true); }} 
-                    className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-rose-50 text-rose-700 text-xs font-bold hover:bg-rose-100 transition-colors"
-                  >
-                    <Edit3 size={14} /> תיקון ידני
-                  </button>
-                  <button onClick={() => handleRetry(job.url)} className="p-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors">
-                    <RefreshCw size={14} />
-                  </button>
-                  <button onClick={() => handleCancel(job.url)} className="p-2 rounded-lg bg-slate-50 text-slate-400 hover:text-rose-600 transition-colors">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

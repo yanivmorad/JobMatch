@@ -27,8 +27,8 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
 
   const { activeQueue, failedJobs } = useMemo(() => {
     return {
-      activeQueue: pendingJobs.filter(j => !['FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA'].includes(j.status)),
-      failedJobs: pendingJobs.filter(j => ['FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA'].includes(j.status))
+      activeQueue: pendingJobs.filter(j => !['FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA', 'DUPLICATE'].includes(j.status)),
+      failedJobs: pendingJobs.filter(j => ['FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA', 'DUPLICATE'].includes(j.status))
     };
   }, [pendingJobs]);
 

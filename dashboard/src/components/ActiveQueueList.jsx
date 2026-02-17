@@ -15,21 +15,23 @@ const QueueItem = ({ job, onRetry }) => {
     switch (status) {
       case 'PENDING_RESOLVE':
         return { 
-          text: 'ממתין לזיהוי', 
+          text: 'מפענח קישור', 
           color: 'bg-amber-500', 
           lightColor: 'bg-amber-50',
           textColor: 'text-amber-600',
           icon: <Clock size={16} />,
-          loading: false
+          loading: true,
+          percentage: 10
         };
       case 'RESOLVING':
         return { 
-          text: 'מזהה כתובת...', 
+          text: 'בבדיקת כתובת', 
           color: 'bg-amber-600', 
           lightColor: 'bg-amber-50',
           textColor: 'text-amber-700',
           icon: <Search size={16} className="animate-pulse" />,
-          loading: true
+          loading: true,
+          percentage: 20
         };
       case 'WAITING_FOR_SCRAPE':
         return { 
@@ -38,17 +40,19 @@ const QueueItem = ({ job, onRetry }) => {
           lightColor: 'bg-blue-50',
           textColor: 'text-blue-600',
           icon: <Clock size={16} />,
-          loading: false
+          loading: true,
+          percentage: 40
         };
       case 'SCRAPING': 
       case 'SCANNING':
         return { 
-          text: 'סורק אתר...', 
+          text: 'סורק תוכן', 
           color: 'bg-blue-500', 
           lightColor: 'bg-blue-50',
           textColor: 'text-blue-600',
           icon: <Search size={16} className="animate-pulse" />,
-          loading: true
+          loading: true,
+          percentage: 55
         };
       case 'WAITING_FOR_AI':
       case 'AI_PENDING':
@@ -59,26 +63,39 @@ const QueueItem = ({ job, onRetry }) => {
           lightColor: 'bg-purple-50',
           textColor: 'text-purple-600',
           icon: <Sparkles size={16} />,
-          loading: false
+          loading: true,
+          percentage: 75
         };
       case 'ANALYZING': 
       case 'AI_PROCESSING':
         return { 
-          text: 'מנתח נתונים...', 
+          text: 'מנתח משרה', 
           color: 'bg-indigo-600', 
           lightColor: 'bg-indigo-50',
           textColor: 'text-indigo-600',
           icon: <Brain size={16} className="animate-pulse" />,
-          loading: true
+          loading: true,
+          percentage: 90
+        };
+      case 'COMPLETED':
+        return {
+          text: 'ניתוח מושלם',
+          color: 'bg-emerald-500',
+          lightColor: 'bg-emerald-50',
+          textColor: 'text-emerald-600',
+          icon: <CheckCircle size={16} />,
+          loading: false,
+          percentage: 100
         };
       case 'DUPLICATE':
         return { 
-          text: 'כבר קיים במערכת', 
-          color: 'bg-slate-400', 
-          lightColor: 'bg-slate-100',
-          textColor: 'text-slate-500',
-          icon: <Clock size={16} />,
-          loading: false
+          text: 'משרה כפולה (כבר קיימת במערכת)', 
+          color: 'bg-amber-400', 
+          lightColor: 'bg-amber-50',
+          textColor: 'text-amber-600',
+          icon: <AlertCircle size={16} />,
+          loading: false,
+          percentage: 100
         };
       default:
         return { 
@@ -87,7 +104,8 @@ const QueueItem = ({ job, onRetry }) => {
           lightColor: 'bg-gray-50',
           textColor: 'text-gray-500',
           icon: <Loader2 size={16} className="animate-spin" />,
-          loading: true
+          loading: true,
+          percentage: 5
         };
     }
   };
@@ -98,12 +116,16 @@ const QueueItem = ({ job, onRetry }) => {
   return (
     <div className="group relative bg-white rounded-xl border border-slate-100 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden">
       
-      {/* פס התקדמות מונפש בתחתית אם יש טעינה */}
-      {config.loading && (
-        <div className="absolute bottom-0 left-0 right-0 h-1 bg-slate-100">
-          <div className={`h-full ${config.color} w-1/3 animate-loading-bar rounded-r-full opacity-60`}></div>
-        </div>
-      )}
+      {/* פס התקדמות דינמי בתחתית */}
+      <div className="absolute bottom-0 left-0 right-0 h-1 bg-slate-100/50">
+        <div 
+          className={`h-full ${config.color} transition-all duration-1000 ease-in-out rounded-r-full`}
+          style={{ width: `${config.percentage}%` }}
+        ></div>
+        {config.loading && (
+          <div className="absolute inset-0 w-full h-full bg-white/20 animate-pulse"></div>
+        )}
+      </div>
 
       <div className="flex items-stretch h-full">
         {/* פס צבע צידי המעיד על סטטוס */}
