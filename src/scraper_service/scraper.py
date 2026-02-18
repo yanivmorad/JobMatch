@@ -36,48 +36,73 @@ class Scraper:
             "X-With-Shadow-Dom": "true",
         }
 
-    def scrape(self, target_url: str) -> Optional[dict]:
+    def scrape(self, target_url: str, job_id: Optional[int] = None) -> Optional[dict]:
         """סורק את התוכן מה-URL המוגמר."""
-        return self._execute_scraping_flow(target_url)
+        id_tag = f"[ID {job_id}] " if job_id else ""
+        logger.info(f"{id_tag}Scraper: Starting scrape flow for {target_url}")
+        return self._execute_scraping_flow(target_url, job_id=job_id)
 
     def _execute_scraping_flow(
-        self, target_url: str, retries: int = 2
+        self, target_url: str, retries: int = 2, job_id: Optional[int] = None
     ) -> Optional[dict]:
+        id_tag = f"[ID {job_id}] " if job_id else ""
         # ניסיון סריקה עם Jina AI
         jina_url = f"https://r.jina.ai/{target_url}"
 
         for attempt in range(retries):
             try:
+                logger.info(
+                    f"{id_tag}Scraper: Attempting Jina AI (Attempt {attempt + 1}) for {target_url}"
+                )
                 headers = self.headers.copy()
                 if attempt > 0:
                     headers["X-No-Cache"] = "true"
 
                 res = self.session.get(jina_url, headers=headers, timeout=40)
                 if res.status_code == 200 and is_content_valid(res.text):
+                    logger.info(f"{id_tag}Scraper: Jina AI success for {target_url}")
                     return {
                         "source": "jina",
                         "full_description": clean_text(res.text),
                     }
+                else:
+                    logger.warning(
+                        f"{id_tag}Scraper: Jina AI returned status {res.status_code} or invalid content for {target_url}"
+                    )
             except Exception as e:
-                logger.warning(f"Jina attempt {attempt + 1} failed: {e}")
+                logger.warning(
+                    f"{id_tag}Scraper: Jina attempt {attempt + 1} failed for {target_url}: {e}"
+                )
 
             if attempt < retries - 1:
                 time.sleep(2)
 
         # Fallback ל-Playwright
         if HAS_PLAYWRIGHT:
-            content = self._scrape_with_playwright(target_url)
+            logger.info(f"{id_tag}Scraper: Falling back to Playwright for {target_url}")
+            content = self._scrape_with_playwright(target_url, job_id=job_id)
             if content and is_content_valid(content):
+                logger.info(f"{id_tag}Scraper: Playwright success for {target_url}")
                 return {
                     "source": "local_browser",
                     "full_description": clean_text(content),
                 }
+            else:
+                logger.warning(
+                    f"{id_tag}Scraper: Playwright failed to extract valid content for {target_url}"
+                )
 
         return None
 
-    def _scrape_with_playwright(self, url: str) -> Optional[str]:
+    def _scrape_with_playwright(
+        self, url: str, job_id: Optional[int] = None
+    ) -> Optional[str]:
+        id_tag = f"[ID {job_id}] " if job_id else ""
         try:
             with sync_playwright() as p:
+                logger.debug(
+                    f"{id_tag}Scraper: Initializing Playwright browser for {url}"
+                )
                 browser = p.chromium.launch(headless=True)
                 page = browser.new_page()
                 page.goto(url, timeout=60000, wait_until="networkidle")
@@ -85,5 +110,5 @@ class Scraper:
                 browser.close()
                 return content
         except Exception as e:
-            logger.error(f"Playwright error: {e}")
+            logger.error(f"{id_tag}Scraper: Playwright error for {url}: {e}")
             return None

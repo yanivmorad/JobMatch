@@ -35,16 +35,25 @@ async def resolver_worker():
             job_id = job["id"]
             original_url = job["url"]
             try:
+                logger.info(
+                    f"🔍 [ID {job_id}] Resolver: starting resolution for {original_url}"
+                )
                 # ה-Resolver מחליט אם הלינק דורש טיפול או לא
                 resolved_url = await asyncio.wait_for(
-                    asyncio.to_thread(resolver.resolve, original_url),
+                    asyncio.to_thread(resolver.resolve, original_url, job_id=job_id),
                     timeout=60,
                 )
 
                 # לוגיקת כפילויות (נשארת אותו דבר, אבל עכשיו היא נקייה יותר)
                 if resolved_url and resolved_url != original_url:
+                    logger.info(
+                        f"🔗 [ID {job_id}] Resolver: resolved to new URL: {resolved_url}"
+                    )
                     existing = await get_job_by_url(resolved_url)
                     if existing:
+                        logger.warning(
+                            f"🚫 [ID {job_id}] Resolver: resolved URL already exists in DB (Duplicate)"
+                        )
                         await mark_failed(
                             job_id, "DUPLICATE", f"Exists as ID: {existing['id']}"
                         )
@@ -55,11 +64,15 @@ async def resolver_worker():
                     )
                 else:
                     # הלינק כבר היה "נקי" או שלא נמצא פיענוח
+                    logger.info(
+                        f"✅ [ID {job_id}] Resolver: no changes needed for {original_url}"
+                    )
                     await update_job_after_resolution(
                         job_id, original_url, "WAITING_FOR_SCRAPE"
                     )
 
             except Exception as e:
+                logger.error(f"❌ [ID {job_id}] Resolver error for {original_url}: {e}")
                 await mark_failed(job_id, "FAILED_RESOLVE", str(e))
         else:
             await asyncio.sleep(5)
@@ -80,11 +93,11 @@ async def scrape_worker():
             job_id = job["id"]
             url = job["url"]
             try:
-                logger.info(f"🌐 סורק משרה {job_id}: {url}")
+                logger.info(f"🕷️ [ID {job_id}] Scraper: starting to scrape {url}")
 
                 # הרצת ה-Scraper (מנסה Jina ואז Playwright)
                 result = await asyncio.wait_for(
-                    asyncio.to_thread(scraper.scrape, url), timeout=60
+                    asyncio.to_thread(scraper.scrape, url, job_id=job_id), timeout=60
                 )
 
                 if result and result.get("full_description"):
@@ -94,18 +107,24 @@ async def scrape_worker():
                         result.get("job_title", "Unknown"),
                         result.get("full_description", ""),
                     )
-                    logger.info(f"✅ סריקה הושלמה עבור משרה {job_id}. עובר לניתוח AI.")
+                    logger.info(
+                        f"✅ [ID {job_id}] Scraper: completed successfully for {url}"
+                    )
                 else:
+                    logger.warning(
+                        f"⚠️ [ID {job_id}] Scraper: no content found for {url}"
+                    )
                     await mark_failed(
                         job_id, "NO_DATA", "הסורק לא הצליח לחלץ תיאור משרה"
                     )
 
             except asyncio.TimeoutError:
+                logger.error(f"⏲️ [ID {job_id}] Scraper timeout (60s) for {url}")
                 await mark_failed(
                     job_id, "FAILED_SCRAPE", "Timeout (60s) during scraping"
                 )
             except Exception as e:
-                logger.error(f"❌ שגיאה בסריקת משרה {job_id}: {e}")
+                logger.error(f"❌ [ID {job_id}] Scraper error for {url}: {e}")
                 await mark_failed(job_id, "FAILED_SCRAPE", str(e))
         else:
             await asyncio.sleep(5)
@@ -124,8 +143,9 @@ async def ai_worker():
         job = await fetch_next_job("WAITING_FOR_AI", "ANALYZING")
         if job:
             job_id = job["id"]
+            url = job.get("url", "No URL")
             try:
-                logger.info(f"🧠 מנתח משרה {job_id} באמצעות AI...")
+                logger.info(f"🧠 [ID {job_id}] AI: starting analysis for {url}")
 
                 # טעינת קבצי עזר (קורות חיים והקשר נוסף)
                 resume = read_text_file(RESUME_PATH)
@@ -138,12 +158,13 @@ async def ai_worker():
                 )
 
                 await finish_analysis(job_id, result)
-                logger.info(f"✨ ניתוח AI הושלם עבור משרה {job_id}!")
+                logger.info(f"✨ [ID {job_id}] AI: analysis completed for {url}")
 
             except asyncio.TimeoutError:
+                logger.error(f"⏲️ [ID {job_id}] AI timeout for {url}")
                 await mark_failed(job_id, "FAILED_ANALYSIS", "AI Timeout")
             except Exception as e:
-                logger.error(f"❌ שגיאה בניתוח AI של משרה {job_id}: {e}")
+                logger.error(f"❌ [ID {job_id}] AI error for {url}: {e}")
                 await mark_failed(job_id, "FAILED_ANALYSIS", str(e))
         else:
             await asyncio.sleep(5)

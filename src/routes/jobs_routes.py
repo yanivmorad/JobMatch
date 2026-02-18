@@ -1,7 +1,7 @@
 # src/routes/jobs_routes.py
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 
 from db.jobs_repository import (
     ApplicationStatus,
@@ -9,6 +9,7 @@ from db.jobs_repository import (
     delete_job_by_url,
     get_all_jobs,
     get_job_by_url,
+    manual_update_job_content,
     update_application_status,
     update_manual_job,
 )
@@ -165,3 +166,12 @@ async def update_job_status(req: ApplicationStatusUpdateRequest):
         return {"message": "Application status updated"}
     except ValueError:
         return {"error": "Invalid status value"}, 400
+
+
+@router.post("/jobs/{job_id}/manual-content")
+async def update_job_manually(job_id: int, content: str = Body(..., embed=True)):
+    try:
+        await manual_update_job_content(job_id, content)
+        return {"status": "success", "message": "Job moved to AI analysis"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

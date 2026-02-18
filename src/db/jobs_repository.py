@@ -133,6 +133,26 @@ async def mark_failed(job_id: int, status: str, error_msg: str):
     )
 
 
+async def manual_update_job_content(job_id: int, manual_description: str):
+    """
+    לוקח משרה קיימת, מזריק לה תוכן ידני ומקפיץ אותה ישר לניתוח AI.
+    מדלג על שלב ה-Resolve וה-Scrape.
+    """
+    pool = await get_pool()
+    await pool.execute(
+        """
+        UPDATE jobs 
+        SET full_description = $1, 
+            status = 'WAITING_FOR_AI', 
+            error_log = NULL,
+            updated_at = NOW()
+        WHERE id = $2
+        """,
+        manual_description,
+        job_id,
+    )
+
+
 # --- פונקציות קריאה (API & UI) ---
 
 
