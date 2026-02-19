@@ -1,7 +1,8 @@
 import React from 'react';
 import { 
   Clock, Search, Sparkles, Brain, Loader2, 
-  Link as LinkIcon, RefreshCw, ExternalLink 
+  Link as LinkIcon, RefreshCw, ExternalLink,
+  AlertCircle, CheckCircle
 } from 'lucide-react';
 
 const QueueItem = ({ job, onRetry }) => {

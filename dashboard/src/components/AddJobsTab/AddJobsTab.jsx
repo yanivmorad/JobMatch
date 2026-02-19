@@ -19,6 +19,7 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
     setDuplicateJobs,
     handleUrlSubmit,
     handleTextSubmit,
+    handleManualUpdate,
     handleRescan,
     handleCancel,
     handleRetry,
@@ -38,10 +39,9 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
         isOpen={isFixModalOpen}
         onClose={() => setIsFixModalOpen(false)}
         job={jobToFix}
-        onSubmit={async (url, title, content) => {
-          const success = await handleTextSubmit(content, title, url);
+        onSubmit={async (jobId, title, content) => {
+          const success = await handleManualUpdate(jobId, content);
           if (success) {
-            await handleCancel(url);
             setIsFixModalOpen(false);
           }
         }}

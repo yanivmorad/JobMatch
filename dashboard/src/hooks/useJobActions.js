@@ -70,6 +70,13 @@ export const useJobActions = (onJobAdded) => {
       if (callback) callback();
     });
   };
+  
+  const handleManualUpdate = async (jobId, content, callback) => {
+    return handleActionWrapper(async () => {
+      await taskService.updateJobContent(jobId, content);
+      if (callback) callback();
+    });
+  };
 
   const handleRescan = (url) => handleActionWrapper(async () => {
     await taskService.deleteJob(url);
@@ -100,6 +107,7 @@ export const useJobActions = (onJobAdded) => {
     setDuplicateJobs,
     handleUrlSubmit,
     handleTextSubmit,
+    handleManualUpdate,
     handleRescan,
     handleCancel,
     handleRetry,

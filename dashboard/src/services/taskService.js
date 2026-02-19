@@ -67,6 +67,12 @@ export const taskService = {
     return response.data;
   },
 
+  // הזרקת תוכן ידני למשרה קיימת (למשל אחרי כישלון סריקה)
+  updateJobContent: async (jobId, content) => {
+    const response = await apiClient.post(`/jobs/${jobId}/manual-content`, { content });
+    return response.data;
+  },
+
   // מחיקת משרה
   deleteJob: async (url) => {
     const response = await apiClient.delete('/jobs', { params: { url } });

@@ -63,7 +63,7 @@ const ManualFixModal = ({ isOpen, onClose, job, onSubmit, isSubmitting }) => {
         <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-3">
           <button onClick={onClose} className="px-6 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-200 transition-colors">ביטול</button>
           <button 
-            onClick={() => onSubmit(job.url, title, content)}
+            onClick={() => onSubmit(job.id, title, content)}
             disabled={!content.trim() || isSubmitting}
             className="px-8 py-3 rounded-xl font-bold bg-blue-600 text-white shadow-lg hover:bg-blue-700 transition-all disabled:opacity-50 flex items-center gap-2"
           >
