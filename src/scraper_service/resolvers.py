@@ -17,7 +17,10 @@ HAS_PLAYWRIGHT = True
 _PROJECT_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
-DEBUG_DIR = os.path.join(os.getenv("LOG_DIR", os.path.join(_PROJECT_ROOT, "logs")), "debug")
+DEBUG_DIR = os.path.join(
+    (os.getenv("LOG_DIR") or "").strip() or os.path.join(_PROJECT_ROOT, "logs"),
+    "debug",
+)
 
 
 def _debug_screenshot(page, name: str) -> None:

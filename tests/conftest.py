@@ -3,8 +3,11 @@ from urllib.parse import urlparse
 
 import asyncpg
 import pytest
+from dotenv import load_dotenv
 
-TEST_DSN = os.getenv("TEST_DATABASE_URL")
+# TEST_DATABASE_URL יכול להגיע מהסביבה או מ-.env
+load_dotenv()
+TEST_DSN = (os.getenv("TEST_DATABASE_URL") or "").strip() or None
 
 
 def _assert_disposable(dsn: str):

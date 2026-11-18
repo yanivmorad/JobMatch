@@ -78,7 +78,8 @@ class JobAnalyzer:
         if not self.api_key:
             raise RuntimeError("❌ GEMINI_API_KEY missing in .env file")
 
-        self.model_name = os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
+        # "or" ולא ברירת מחדל של getenv: שורה ריקה ב-.env (GEMINI_MODEL=) מגיעה כ-""
+        self.model_name = (os.getenv("GEMINI_MODEL") or "").strip() or DEFAULT_MODEL
         # המפתח נשלח ב-header ולא ב-URL: הודעות שגיאה של requests כוללות את ה-URL,
         # ומפתח ב-query string היה דולף ללוגים.
         self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent"

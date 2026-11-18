@@ -80,6 +80,13 @@ def test_model_is_configurable(monkeypatch):
     assert "/models/gemini-3.5-flash-lite:generateContent" in JobAnalyzer().api_url
 
 
+def test_empty_model_env_falls_back_to_default(monkeypatch):
+    """שורה ריקה GEMINI_MODEL= ב-.env (כמו ב-.env.example) לא אמורה לשבור את ה-URL."""
+    monkeypatch.setenv("GEMINI_API_KEY", FAKE_KEY)
+    monkeypatch.setenv("GEMINI_MODEL", "")
+    assert f"/models/{engine.DEFAULT_MODEL}:generateContent" in JobAnalyzer().api_url
+
+
 def test_prompt_has_no_hardcoded_candidate_name():
     """באג: השם 'יניב' היה כתוב בתוך הפרומפט."""
     prompt = build_prompt("cv", "ctx", {"full_description": "d"})
