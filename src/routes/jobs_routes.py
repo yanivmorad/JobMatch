@@ -1,5 +1,6 @@
 # src/routes/jobs_routes.py
 import logging
+import uuid
 
 from fastapi import APIRouter, Body, HTTPException
 
@@ -95,17 +96,23 @@ async def add_url_jobs(submission: JobSubmission):
 
 @router.post("/jobs/text")
 async def add_text_job(submission: TextSubmission):
-    """Intake ידני: מדלג ישר ל-AI"""
-    fake_url = f"manual-{submission.company}-{submission.title}".replace(" ", "-")
+    """
+    Intake ידני: מדלג ישר ל-AI.
+    לכל משרה ידנית מזהה ייחודי: קודם ה-URL נבנה מהשם בלבד, ומשרות עם אותו שם
+    (למשל כל המשרות בלי כותרת) נבלעו בשקט ב-ON CONFLICT DO NOTHING.
+    """
+    job_url = f"manual://{uuid.uuid4().hex}"
     manual_meta = {"title": submission.title, "company": submission.company}
 
-    await add_new_job(
-        url=fake_url,
+    added = await add_new_job(
+        url=job_url,
         source="manual",
         manual_text=submission.text,
         manual_meta=manual_meta,
     )
-    return {"message": "Manual job added to AI queue"}
+    if not added:
+        raise HTTPException(status_code=500, detail="Failed to add manual job")
+    return {"message": "Manual job added to AI queue", "url": job_url}
 
 
 @router.delete("/jobs")
@@ -162,10 +169,11 @@ async def update_job_status(req: ApplicationStatusUpdateRequest):
     )
     try:
         status_enum = ApplicationStatus(req.status)
-        await update_application_status(req.url, status_enum, req.is_archived)
-        return {"message": "Application status updated"}
     except ValueError:
-        return {"error": "Invalid status value"}, 400
+        # קודם הוחזר tuple, ש-FastAPI הפך לתשובת 200 עם רשימה
+        raise HTTPException(status_code=400, detail="Invalid status value")
+    await update_application_status(req.url, status_enum, req.is_archived)
+    return {"message": "Application status updated"}
 
 
 @router.post("/jobs/{job_id}/manual-content")

@@ -313,10 +313,27 @@ async def update_manual_job(url: str, company: str, title: str, description: str
 
 
 async def retry_job(url: str):
-    """מחזיר משרה שנכשלה לשלב הסריקה לניסיון נוסף."""
+    """
+    מחזיר משרה לתור, לשלב שבו היא נכשלה:
+    - משרה ידנית, או כישלון AI כשיש כבר תיאור -> WAITING_FOR_AI
+    - כישלון בפענוח הלינק -> PENDING_RESOLVE
+    - כל השאר -> WAITING_FOR_SCRAPE
+    (קודם הכל הלך לסריקה: משרה ידנית ניסתה לסרוק URL מזויף, וכישלון resolve דילג על הפענוח)
+    """
     pool = await get_pool()
     await pool.execute(
-        "UPDATE jobs SET status = 'WAITING_FOR_SCRAPE', error_log = NULL, is_archived = FALSE WHERE url = $1",
+        """
+        UPDATE jobs SET
+            status = (CASE
+                WHEN source = 'manual' THEN 'WAITING_FOR_AI'
+                WHEN status = 'FAILED_ANALYSIS'
+                     AND COALESCE(full_description, '') <> '' THEN 'WAITING_FOR_AI'
+                WHEN status IN ('FAILED_RESOLVE', 'DUPLICATE') THEN 'PENDING_RESOLVE'
+                ELSE 'WAITING_FOR_SCRAPE'
+            END)::job_status,
+            error_log = NULL, is_archived = FALSE
+        WHERE url = $1
+        """,
         url,
     )
 
