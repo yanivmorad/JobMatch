@@ -103,9 +103,9 @@ async def scrape_worker():
                 if result and result.get("full_description"):
                     await finish_scrape(
                         job_id,
-                        result.get("company", "Unknown"),
-                        result.get("job_title", "Unknown"),
-                        result.get("full_description", ""),
+                        result["full_description"],
+                        company=result.get("company"),
+                        title=result.get("job_title"),
                     )
                     logger.info(
                         f"✅ [ID {job_id}] Scraper: completed successfully for {url}"

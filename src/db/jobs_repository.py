@@ -4,8 +4,18 @@ from enum import Enum
 from typing import List, Optional
 
 from db.postgres import get_pool
+from services.job_fields import PLACEHOLDER_VALUES, clean_field
 
 logger = logging.getLogger("Repository")
+
+# שדות שה-DB הוא המקור הקובע עבורם; ה-JSON של הניתוח לא דורס אותם בתצוגה
+_PROTECTED_FIELDS = {"id", "url", "status", "company", "job_title"}
+
+# SQL: האם הערך הנוכחי בעמודה הוא placeholder (ואז מותר לדרוס אותו בערך שחולץ)
+_IS_PLACEHOLDER_SQL = (
+    "({col} IS NULL OR lower(btrim({col})) = ANY($5::text[]) "
+    "OR {col} ~* '^(https?://|manual)')"
+)
 
 # --- הגדרות וסטטוסים ---
 
@@ -94,31 +104,63 @@ async def update_job_after_resolution(job_id: int, new_url: str, status: str):
     )
 
 
-async def finish_scrape(job_id: int, company: str, title: str, description: str):
-    """שומר את המידע שחולץ מהאתר (Scraping) ומעביר את המשרה לתור ה-AI."""
+async def finish_scrape(
+    job_id: int,
+    description: str,
+    company: Optional[str] = None,
+    title: Optional[str] = None,
+):
+    """
+    שומר את המידע שחולץ מהאתר (Scraping) ומעביר את המשרה לתור ה-AI.
+    company/title נשמרים רק אם הסורק באמת מצא אותם (אחרת ה-AI יחלץ אותם בשלב הבא).
+    """
     pool = await get_pool()
     await pool.execute(
         """
-        UPDATE jobs SET 
-            status = 'WAITING_FOR_AI', company = $2, job_title = $3, 
+        UPDATE jobs SET
+            status = 'WAITING_FOR_AI',
+            company = COALESCE($2, company),
+            job_title = COALESCE($3, job_title),
             full_description = $4, scraped_at = NOW(), updated_at = NOW()
         WHERE id = $1
         """,
         job_id,
-        company,
-        title,
+        clean_field(company),
+        clean_field(title),
         description,
     )
 
 
 async def finish_analysis(job_id: int, result: dict):
-    """שומר את תוצאות הניתוח הסופיות של ה-LLM ומסמן את התהליך כהושלם (COMPLETED)."""
+    """
+    שומר את תוצאות הניתוח הסופיות של ה-LLM ומסמן את התהליך כהושלם (COMPLETED).
+    company / job_title שה-AI חילץ נכתבים לעמודות רק אם הערך הקיים הוא placeholder,
+    כך שערך שהמשתמש הזין ידנית לא נדרס.
+    """
     pool = await get_pool()
-    json_result = json.dumps(result) if isinstance(result, dict) else result
+    if isinstance(result, dict):
+        company = clean_field(result.get("company"))
+        title = clean_field(result.get("job_title"))
+        json_result = json.dumps(result)
+    else:
+        company = title = None
+        json_result = result
+
+    company_cond = _IS_PLACEHOLDER_SQL.format(col="company")
+    title_cond = _IS_PLACEHOLDER_SQL.format(col="job_title")
     await pool.execute(
-        "UPDATE jobs SET status = 'COMPLETED', analysis_result = $2, analyzed_at = NOW() WHERE id = $1",
+        f"""
+        UPDATE jobs SET
+            status = 'COMPLETED', analysis_result = $2, analyzed_at = NOW(),
+            company = CASE WHEN $3::text IS NOT NULL AND {company_cond} THEN $3 ELSE company END,
+            job_title = CASE WHEN $4::text IS NOT NULL AND {title_cond} THEN $4 ELSE job_title END
+        WHERE id = $1
+        """,
         job_id,
         json_result,
+        company,
+        title,
+        list(PLACEHOLDER_VALUES),
     )
 
 
@@ -175,7 +217,13 @@ async def get_all_jobs() -> List[dict]:
                     except:
                         analysis = {}
                 if isinstance(analysis, dict):
-                    job.update(analysis)
+                    job.update(
+                        {
+                            k: v
+                            for k, v in analysis.items()
+                            if k not in _PROTECTED_FIELDS
+                        }
+                    )
             results.append(job)
         return results
 
