@@ -14,6 +14,27 @@ logger = logging.getLogger(__name__)
 
 HAS_PLAYWRIGHT = True
 
+_PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+DEBUG_DIR = os.path.join(os.getenv("LOG_DIR", os.path.join(_PROJECT_ROOT, "logs")), "debug")
+
+
+def _debug_screenshot(page, name: str) -> None:
+    """
+    צילום מסך לדיבאג - רק כש-DEBUG_SCREENSHOTS=true, ורק לתוך logs/debug/.
+    (קודם נשמר תמיד לתיקיית העבודה, כלומר לשורש הפרויקט / לדיסק של השרת בענן)
+    """
+    if os.getenv("DEBUG_SCREENSHOTS", "").strip().lower() not in ("1", "true", "yes"):
+        return
+    try:
+        os.makedirs(DEBUG_DIR, exist_ok=True)
+        path = os.path.join(DEBUG_DIR, name)
+        page.screenshot(path=path)
+        logger.info(f"Debug screenshot saved: {path}")
+    except Exception as e:
+        logger.warning(f"Could not save debug screenshot {name}: {e}")
+
 
 class URLResolver:
     """
@@ -79,8 +100,10 @@ class URLResolver:
                 page.goto(url, wait_until="domcontentloaded")
 
                 # 2. Inject token into local storage
+                # הטוקן מועבר כארגומנט ולא משורשר לקוד JS
                 page.evaluate(
-                    f"window.localStorage.setItem('auth_token', '{self.hireme_token}');"
+                    "token => window.localStorage.setItem('auth_token', token)",
+                    self.hireme_token,
                 )
 
                 # 3. Reload and wait for session to apply
@@ -107,12 +130,13 @@ class URLResolver:
 
                 if not apply_button or not apply_button.is_visible():
                     logger.error(
-                        f"{id_tag}Resolver: FAILED to find Apply button for {url}. Taking screenshot."
+                        f"{id_tag}Resolver: FAILED to find Apply button for {url}."
                     )
-                    page.screenshot(
-                        path=f"debug_missing_button_{job_id}.png"
+                    _debug_screenshot(
+                        page,
+                        f"missing_button_{job_id}.png"
                         if job_id
-                        else "debug_missing_button.png"
+                        else "missing_button.png",
                     )
                     browser.close()
                     return url

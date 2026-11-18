@@ -22,3 +22,4 @@ data/
 
 # Tests
 .pytest_cache/
+logs/
