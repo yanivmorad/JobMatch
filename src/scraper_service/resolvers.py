@@ -2,17 +2,21 @@
 import logging
 import os
 from typing import Optional
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright
+
+try:
+    from playwright.sync_api import sync_playwright
+
+    HAS_PLAYWRIGHT = True
+except ImportError:
+    HAS_PLAYWRIGHT = False
 
 # טעינת משתני סביבה מהקובץ .env
 load_dotenv()
 
 logger = logging.getLogger(__name__)
-
-
-HAS_PLAYWRIGHT = True
 
 _PROJECT_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -21,6 +25,15 @@ DEBUG_DIR = os.path.join(
     (os.getenv("LOG_DIR") or "").strip() or os.path.join(_PROJECT_ROOT, "logs"),
     "debug",
 )
+
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+)
+
+
+class ResolveError(Exception):
+    """פענוח הקישור נכשל. ההודעה מוצגת למשתמש ב-UI (error_log)."""
 
 
 def _debug_screenshot(page, name: str) -> None:
@@ -39,6 +52,11 @@ def _debug_screenshot(page, name: str) -> None:
         logger.warning(f"Could not save debug screenshot {name}: {e}")
 
 
+def _is_hiremetech(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return host == "hiremetech.com" or host.endswith(".hiremetech.com")
+
+
 class URLResolver:
     """
     Resolves special job site URLs that require authentication or redirection.
@@ -50,15 +68,16 @@ class URLResolver:
         Initialize the resolver with authentication tokens.
         If no token is provided, it attempts to fetch from HIRE_ME_TECH_TOKEN env var.
         """
-        # אם לא התקבל טוקן, נסה למשוך מה-env
-        self.hireme_token = hireme_token or os.getenv("HIRE_ME_TECH_TOKEN")
+        self.hireme_token = hireme_token or (os.getenv("HIRE_ME_TECH_TOKEN") or "").strip()
 
     def resolve(self, url: str, job_id: Optional[int] = None) -> str:
         """
         Resolves a URL to its final destination.
+        Raises ResolveError when a special site cannot be resolved: scraping the
+        HireMeTech page itself would only return its login wall.
         """
         id_tag = f"[ID {job_id}] " if job_id else ""
-        if "hiremetech.com" in url:
+        if _is_hiremetech(url):
             logger.info(
                 f"{id_tag}Resolver: HireMeTech detected for {url}, starting VIP resolution"
             )
@@ -73,108 +92,101 @@ class URLResolver:
         """
         id_tag = f"[ID {job_id}] " if job_id else ""
         if not HAS_PLAYWRIGHT:
-            logger.warning(
-                f"{id_tag}Resolver: Playwright is not installed! Cannot resolve {url}"
-            )
-            return url
+            raise ResolveError("HireMeTech: Playwright לא מותקן בשרת, אי אפשר לפענח את הקישור")
 
         if not self.hireme_token:
-            logger.warning(
-                f"{id_tag}Resolver: HIRE_ME_TECH_TOKEN not set! Cannot resolve {url}"
-            )
-            return url
+            raise ResolveError("HireMeTech: חסר HIRE_ME_TECH_TOKEN בהגדרות השרת")
 
         logger.info(f"{id_tag}Resolver: Starting Playwright for HireMeTech: {url}")
 
         try:
             with sync_playwright() as p:
-                # שינוי ל-headless=True כדי שלא יפתח חלונות בשרת
                 browser = p.chromium.launch(headless=True)
-                context = browser.new_context(
-                    viewport={"width": 1280, "height": 800},
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                )
-                page = context.new_page()
-
-                # 1. Access the job page
-                logger.info(
-                    f"{id_tag}Resolver: Navigating to HireMeTech job page: {url}"
-                )
-                page.goto(url, wait_until="domcontentloaded")
-
-                # 2. Inject token into local storage
-                # הטוקן מועבר כארגומנט ולא משורשר לקוד JS
-                page.evaluate(
-                    "token => window.localStorage.setItem('auth_token', token)",
-                    self.hireme_token,
-                )
-
-                # 3. Reload and wait for session to apply
-                logger.debug(
-                    f"{id_tag}Resolver: Injecting token and reloading for {url}"
-                )
-                page.reload(wait_until="networkidle")
-                page.wait_for_timeout(4000)
-
-                # 4. Smart Button Detection
-                apply_button = None
-                for text in ["הגש מועמדות", "Apply Now"]:
-                    btn = page.get_by_role("button", name=text, exact=False)
-                    if btn.is_visible():
-                        apply_button = btn
-                        logger.info(
-                            f"{id_tag}Resolver: Found Apply button with text '{text}' for {url}"
-                        )
-                        break
-
-                if not apply_button:
-                    # Fallback to CSS
-                    apply_button = page.locator("button.bg-gradient-to-r").first
-
-                if not apply_button or not apply_button.is_visible():
-                    logger.error(
-                        f"{id_tag}Resolver: FAILED to find Apply button for {url}."
-                    )
-                    _debug_screenshot(
-                        page,
-                        f"missing_button_{job_id}.png"
-                        if job_id
-                        else "missing_button.png",
-                    )
-                    browser.close()
-                    return url
-
-                # 5. Execute Click and Capture Final URL
-                final_url = url
                 try:
-                    logger.info(f"{id_tag}Resolver: Clicking apply button for {url}")
-                    with context.expect_page(timeout=10000) as new_page_info:
-                        apply_button.click(force=True, delay=300)
-
-                    new_page = new_page_info.value
-                    new_page.wait_for_load_state("networkidle")
-                    final_url = new_page.url
-                    logger.info(
-                        f"{id_tag}Resolver: SUCCESS! Resolved {url} to {final_url}"
-                    )
-                except Exception:
-                    # Check for direct redirect
-                    page.wait_for_timeout(4000)
-                    if page.url != url:
-                        final_url = page.url
-                        logger.info(
-                            f"{id_tag}Resolver: SUCCESS! Resolved {url} via direct redirect to {final_url}"
-                        )
-                    else:
-                        logger.warning(
-                            f"{id_tag}Resolver: No redirect detected for {url} after click."
-                        )
-
-                browser.close()
-                return final_url
-
+                    return self._click_through_hiremetech(browser, url, job_id, id_tag)
+                finally:
+                    # נסגר תמיד, גם בשגיאה / timeout
+                    browser.close()
+        except ResolveError:
+            raise
         except Exception as e:
             logger.error(
                 f"{id_tag}Resolver: FATAL error in _resolve_hiremetech for {url}: {e}"
             )
-            return url
+            raise ResolveError(f"HireMeTech: שגיאה בפענוח הקישור ({type(e).__name__})") from e
+
+    def _click_through_hiremetech(self, browser, url, job_id, id_tag) -> str:
+        context = browser.new_context(
+            viewport={"width": 1280, "height": 800}, user_agent=_USER_AGENT
+        )
+        page = context.new_page()
+
+        # 1. Access the job page
+        logger.info(f"{id_tag}Resolver: Navigating to HireMeTech job page: {url}")
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+        # 2. Inject token into local storage (כארגומנט, לא משורשר לקוד JS)
+        page.evaluate(
+            "token => window.localStorage.setItem('auth_token', token)",
+            self.hireme_token,
+        )
+
+        # 3. Reload and wait for session to apply
+        logger.debug(f"{id_tag}Resolver: Injecting token and reloading for {url}")
+        page.reload(wait_until="networkidle", timeout=30000)
+        page.wait_for_timeout(4000)
+
+        # 4. Smart Button Detection
+        apply_button = None
+        for text in ["הגש מועמדות", "Apply Now"]:
+            btn = page.get_by_role("button", name=text, exact=False)
+            if btn.is_visible():
+                apply_button = btn
+                logger.info(
+                    f"{id_tag}Resolver: Found Apply button with text '{text}' for {url}"
+                )
+                break
+
+        if not apply_button:
+            # Fallback to CSS
+            apply_button = page.locator("button.bg-gradient-to-r").first
+
+        if not apply_button or not apply_button.is_visible():
+            logger.error(f"{id_tag}Resolver: FAILED to find Apply button for {url}.")
+            _debug_screenshot(
+                page, f"missing_button_{job_id}.png" if job_id else "missing_button.png"
+            )
+            raise ResolveError(
+                "HireMeTech: לא נמצא כפתור הגשה - ייתכן שהטוקן פג או שהמשרה הוסרה"
+            )
+
+        # 5. Execute Click and Capture Final URL
+        logger.info(f"{id_tag}Resolver: Clicking apply button for {url}")
+        new_page = None
+        try:
+            with context.expect_page(timeout=10000) as new_page_info:
+                apply_button.click(force=True, delay=300)
+            new_page = new_page_info.value
+        except Exception:
+            pass  # לא נפתח טאב חדש - אולי הפניה באותו טאב
+
+        if new_page is not None:
+            # timeout של טעינה לא מבטל את ה-URL שכבר הגענו אליו (אתרים כבדים לא מגיעים ל-networkidle)
+            for state, timeout in (("domcontentloaded", 20000), ("networkidle", 10000)):
+                try:
+                    new_page.wait_for_load_state(state, timeout=timeout)
+                except Exception:
+                    break
+            final_url = new_page.url
+        else:
+            page.wait_for_timeout(4000)
+            final_url = page.url
+
+        if not final_url.startswith("http") or _is_hiremetech(final_url):
+            logger.warning(f"{id_tag}Resolver: No redirect detected for {url} after click.")
+            raise ResolveError(
+                "HireMeTech: הלחיצה על 'הגש מועמדות' לא הובילה לאתר החברה"
+            )
+
+        logger.info(f"{id_tag}Resolver: SUCCESS! Resolved {url} to {final_url}")
+        return final_url

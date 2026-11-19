@@ -72,7 +72,11 @@ async def resolver_worker():
                         job_id, original_url, "WAITING_FOR_SCRAPE"
                     )
 
+            except asyncio.TimeoutError:
+                logger.error(f"⏲️ [ID {job_id}] Resolver timeout (60s) for {original_url}")
+                await mark_failed(job_id, "FAILED_RESOLVE", "Timeout (60s) בפענוח הקישור")
             except Exception as e:
+                # ResolveError מכיל הודעה ברורה למשתמש (טוקן חסר / כפתור לא נמצא...)
                 logger.error(f"❌ [ID {job_id}] Resolver error for {original_url}: {e}")
                 await mark_failed(job_id, "FAILED_RESOLVE", str(e))
         else:
