@@ -93,3 +93,47 @@ def test_playwright_fetch_failure_is_traced(make_scraper):
     trace = []
     assert s.scrape("https://x.com/job", trace=trace) is None
     assert trace[-1]["reason"] == "fetch_failed"
+
+
+class _SeqSession:
+    """מחזיר תשובות לפי הסדר ושומר את ה-headers של כל קריאה."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def get(self, url, headers=None, timeout=None):
+        self.calls.append(dict(headers))
+        return self.responses.pop(0)
+
+
+SELECTOR_MISS = _Resp(
+    422,
+    '{"code":422,"message":"No content available for URL https://jobs.lever.co/x with target selector main, article"}',
+)
+
+
+def test_jina_selector_miss_retries_full_page(make_scraper):
+    """באג: X-Target-Selector גרם ל-422 באתרים בלי main/article (Lever), ונפל ל-Playwright."""
+    s = make_scraper(_Resp(200, VALID_JOB))
+    s.session = _SeqSession([SELECTOR_MISS, _Resp(200, VALID_JOB)])
+    trace = []
+
+    result = s.scrape("https://jobs.lever.co/x", trace=trace)
+
+    assert result["source"] == "jina"
+    assert [a["method"] for a in trace] == ["jina", "jina_full_page"]
+    assert trace[0]["reason"] == "jina_selector_miss"
+    assert "X-Target-Selector" in s.session.calls[0]
+    assert "X-Target-Selector" not in s.session.calls[1]
+
+
+def test_other_jina_errors_do_not_retry(make_scraper):
+    s = make_scraper(_Resp(200, VALID_JOB), playwright_content=VALID_JOB)
+    s.session = _SeqSession([_Resp(422, '{"message":"Invalid URL"}')])
+    trace = []
+
+    s.scrape("https://x.com/job", trace=trace)
+
+    assert [a["method"] for a in trace] == ["jina", "playwright"]
+    assert len(s.session.calls) == 1

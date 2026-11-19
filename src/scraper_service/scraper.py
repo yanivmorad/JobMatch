@@ -92,21 +92,34 @@ class Scraper:
         return None
 
     def _try_jina(self, url: str, id_tag: str, trace: List[dict]) -> Optional[dict]:
+        result = self._jina_request(url, id_tag, trace, self.headers)
+        if result is None and trace and trace[-1].get("reason") == "jina_selector_miss":
+            # Jina מחזיר 422 כשאף אחד מה-selectors לא קיים בדף (למשל Lever) -
+            # מנסים שוב את כל הדף לפני שעוברים ל-Playwright
+            headers = {k: v for k, v in self.headers.items() if k != "X-Target-Selector"}
+            result = self._jina_request(url, id_tag, trace, headers, method="jina_full_page")
+        return result
+
+    def _jina_request(
+        self, url: str, id_tag: str, trace: List[dict], headers: dict, method: str = "jina"
+    ) -> Optional[dict]:
         jina_url = f"https://r.jina.ai/{url}"
         t0 = time.time()
-        entry = {"method": "jina", "status": None, "length": 0, "valid": False}
+        entry = {"method": method, "status": None, "length": 0, "valid": False}
         try:
             # שימוש ב-timeout קצר יותר ברמת ה-HTTP
-            res = self.session.get(jina_url, headers=self.headers, timeout=25)
+            res = self.session.get(jina_url, headers=headers, timeout=25)
             entry["status"] = res.status_code
             entry["length"] = len(res.text or "")
             if res.status_code == 200:
                 valid, reason = validate_content(res.text)
+            elif res.status_code == 422 and "target selector" in (res.text or ""):
+                valid, reason = False, "jina_selector_miss"
             else:
                 valid, reason = False, f"jina_http_{res.status_code}"
             entry.update(valid=valid, reason=reason)
             if valid:
-                logger.info(f"{id_tag}Scraper: Jina AI success")
+                logger.info(f"{id_tag}Scraper: Jina AI success ({method})")
                 return {
                     "source": "jina",
                     "full_description": clean_text(res.text),
