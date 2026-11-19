@@ -1,0 +1,45 @@
+# Local environment: Postgres + JobMatch server (API + workers).
+#
+#   cp .env.example .env      # fill in GEMINI_API_KEY / JINA_API_KEY / HIRE_ME_TECH_TOKEN
+#   docker compose up --build
+#
+# The dashboard is not containerized: run it with `npm run dev` in dashboard/.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      # Local-only credentials for this disposable container DB
+      POSTGRES_USER: jobmatch
+      POSTGRES_PASSWORD: jobmatch
+      POSTGRES_DB: jobmatch
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Exposed on localhost only (5434, so it doesn't clash with a local Postgres on 5432)
+    ports:
+      - "127.0.0.1:5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobmatch -d jobmatch"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    env_file: .env
+    environment:
+      # Overrides any DATABASE_URL / PG_* from .env: inside compose, always use the db container
+      DATABASE_URL: postgresql://jobmatch:jobmatch@db:5432/jobmatch
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      # resume.txt + "Personal Context.txt" (read/write: the Profile tab edits them)
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+volumes:
+  pgdata:

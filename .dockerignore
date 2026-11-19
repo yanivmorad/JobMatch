@@ -1,0 +1,21 @@
+# Never bake secrets or personal data into the image
+.env
+.env.*
+!.env.example
+data/
+results.json
+
+# Local / build artifacts
+.git/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+logs/
+*.log
+*.png
+
+# Not needed by the API server
+dashboard/
+tests/
+scripts/
