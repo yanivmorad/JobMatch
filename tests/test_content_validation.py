@@ -230,3 +230,65 @@ def test_failure_message_prefers_most_informative_reason():
     assert "סגורה" in failure_message(["too_short", "job_unavailable"])
     assert "404" in failure_message(["http_error_404"])
     assert failure_message([None, "too_short"]) == "הסורק לא הצליח לחלץ תיאור משרה"
+
+
+# ------------------------------------------------- redirects (real cases from data/links.txt)
+
+from scraper_service.utils import redirected_away
+
+_BODY = """Markdown Content:
+We are looking for a Data Analyst. Requirements: 2 years of experience with SQL,
+strong analytical skills. You will build dashboards. Responsibilities include reporting.
+"""
+
+
+def _page(final_url: str) -> str:
+    return f"Title: Jobs\nURL Source: x\nFinal URL: {final_url}\n{_BODY}"
+
+
+@pytest.mark.parametrize(
+    "requested, final",
+    [
+        # Comeet: משרה שלא קיימת -> רשימת המשרות של החברה
+        (
+            "https://www.comeet.com/jobs/supercom/46.00A/no-such-job/00.000",
+            "https://www.comeet.com/jobs/supercom/46.00A",
+        ),
+        # LinkedIn: משרה ישנה -> דף חיפוש בברזיל
+        (
+            "https://www.linkedin.com/jobs/view/3500000000",
+            "https://br.linkedin.com/jobs/escale-vagas?trk=expired_jd_redirect&position=1",
+        ),
+        # Greenhouse: משרה סגורה -> לוח המשרות עם error=true
+        ("https://job-boards.greenhouse.io/gitlab/jobs/1", "https://job-boards.greenhouse.io/gitlab?error=true"),
+        # הפניה לדף הבית
+        ("https://acme.com/careers/backend-dev/123", "https://www.acme.com/"),
+    ],
+    ids=["comeet_to_board", "linkedin_expired", "greenhouse_error", "homepage"],
+)
+def test_redirect_to_listing_means_job_unavailable(requested, final):
+    """באג: משרה שהוסרה הפנתה לרשימת משרות / דף חיפוש, והדף עבר כ'תקין' (כי יש בו מילים של משרות)."""
+    assert redirected_away(requested, final)
+    assert validate_content(_page(final), requested) == (False, "job_unavailable")
+
+
+@pytest.mark.parametrize(
+    "requested, final",
+    [
+        # resolver של HireMeTech: אתר אחר לגמרי
+        ("https://hiremetech.com/jobs/1", "https://www.comeet.com/jobs/acme/46.00A/role/12.345"),
+        # שינוי slug באותו אתר
+        ("https://www.comeet.com/jobs/acme/46.00A/old-name/12.345", "https://www.comeet.com/jobs/acme/46.00A/new-name/12.345"),
+        # רק '?' / '/' בסוף
+        ("https://amat.wd1.myworkdayjobs.com/External/job/R123?", "https://amat.wd1.myworkdayjobs.com/External/job/R123"),
+        ("https://jobs.lever.co/acme/abc/", "https://jobs.lever.co/acme/abc"),
+    ],
+    ids=["cross_site", "slug_change", "trailing_qmark", "trailing_slash"],
+)
+def test_legit_redirects_are_kept(requested, final):
+    assert not redirected_away(requested, final)
+    assert validate_content(_page(final), requested) == (True, "ok")
+
+
+def test_final_url_without_requested_url_is_ignored():
+    assert validate_content(_page("https://www.comeet.com/jobs/supercom/46.00A")) == (True, "ok")

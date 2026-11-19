@@ -46,7 +46,7 @@ SITES = [
     ("BambooHR", ("bamboohr.com",)),
 ]
 
-_JINA_HEADER = re.compile(r"^(Title|URL Source|Published Time|Markdown Content|Warning):.*$", re.MULTILINE)
+_JINA_HEADER = re.compile(r"^(Title|URL Source|Final URL|Published Time|Markdown Content|Warning):.*$", re.MULTILINE)
 
 
 def site_of(url: str) -> str:
@@ -113,6 +113,7 @@ def run_one(url: str, resolver: URLResolver, scraper: Scraper, skip_resolve: boo
                 method=winner,  # jina / jina_full_page / playwright
                 length=len(text),
                 preview=" ".join(_JINA_HEADER.sub("", text).split())[:200],
+                text=text,  # הטקסט המלא - נשמר רק ב-JSON (לבדיקת איכות ולשלב הניתוח)
             )
         elif row["error"] is None:
             row["error"] = failure_message([a.get("reason") for a in trace])

@@ -71,7 +71,9 @@ class Scraper:
             logger.info(f"{id_tag}Scraper: Falling back to Local Playwright")
             t0 = time.time()
             content = self._scrape_with_playwright(target_url, job_id=job_id)
-            valid, reason = validate_content(content) if content else (False, "fetch_failed")
+            valid, reason = (
+                validate_content(content, target_url) if content else (False, "fetch_failed")
+            )
             trace.append(
                 {
                     "method": "playwright",
@@ -112,7 +114,7 @@ class Scraper:
             entry["status"] = res.status_code
             entry["length"] = len(res.text or "")
             if res.status_code == 200:
-                valid, reason = validate_content(res.text)
+                valid, reason = validate_content(res.text, url)
             elif res.status_code == 422 and "target selector" in (res.text or ""):
                 valid, reason = False, "jina_selector_miss"
             else:
@@ -161,8 +163,12 @@ class Scraper:
                     page.goto(url, timeout=30000, wait_until="domcontentloaded")
                     page.wait_for_timeout(2000)  # המתנה קטנה ל-JS
 
-                    # שורת Title בפורמט של Jina, כדי ש-validate_content יבדוק גם את הכותרת
-                    return f"Title: {page.title()}\n\n" + md(page.content())
+                    # שורות Title / Final URL בפורמט של Jina, כדי ש-validate_content
+                    # יבדוק גם את הכותרת וגם הפניה לרשימת המשרות (משרה שהוסרה)
+                    header = f"Title: {page.title()}\n"
+                    if page.url.rstrip("/?") != url.rstrip("/?"):
+                        header += f"Final URL: {page.url}\n"
+                    return header + "\n" + md(page.content())
                 finally:
                     # נסגר תמיד, גם בשגיאה / timeout
                     browser.close()

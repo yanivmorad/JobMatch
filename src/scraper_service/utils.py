@@ -1,6 +1,7 @@
 # src/scraper_service/utils.py
 import re
 from typing import Optional, Tuple
+from urllib.parse import urlparse
 
 MIN_LENGTH = 150
 MIN_JOB_SIGNALS = 2
@@ -104,8 +105,42 @@ _JOB_SIGNALS = (
 
 # שורות הכותרת ש-Jina מוסיף לפני התוכן
 _JINA_HEADER = re.compile(
-    r"^(Title|URL Source|Published Time|Markdown Content|Warning):.*$", re.MULTILINE
+    r"^(Title|URL Source|Final URL|Published Time|Markdown Content|Warning):.*$",
+    re.MULTILINE,
 )
+# Jina (וגם ה-fallback של Playwright) מוסיפים "Final URL:" כשהיתה הפניה
+_FINAL_URL = re.compile(r"^Final URL:\s*(\S+)", re.MULTILINE)
+# סימנים ב-URL הסופי שהמשרה כבר לא קיימת (LinkedIn: trk=expired_jd_redirect, Greenhouse: ?error=true)
+_UNAVAILABLE_URL_MARKERS = ("expired", "error=true", "jobnotfound", "job-not-found")
+
+
+def _site_key(host: str) -> str:
+    """br.linkedin.com -> linkedin.com, www.alljobs.co.il -> alljobs.co.il"""
+    labels = (host or "").lower().split(".")
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in ("co", "com", "org", "net", "ac", "gov"):
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def redirected_away(requested_url: Optional[str], final_url: Optional[str]) -> bool:
+    """
+    True אם ההפניה מעידה שהמשרה הוסרה:
+    - ה-URL הסופי מסומן כפג תוקף / שגיאה, או
+    - הפניה "למעלה" באותו אתר: לרשימת המשרות של החברה או לדף הבית
+      (Comeet: /jobs/acme/46.00A/role/12.345 -> /jobs/acme/46.00A).
+    הפניה לאתר אחר (HireMeTech -> Comeet) או לעמוד משרה אחר - תקינה.
+    """
+    if not requested_url or not final_url:
+        return False
+    if any(m in final_url.lower() for m in _UNAVAILABLE_URL_MARKERS) and not any(
+        m in requested_url.lower() for m in _UNAVAILABLE_URL_MARKERS
+    ):
+        return True
+    rq, fn = urlparse(requested_url), urlparse(final_url)
+    if _site_key(rq.hostname) != _site_key(fn.hostname):
+        return False
+    req_path, final_path = rq.path.rstrip("/"), fn.path.rstrip("/")
+    return final_path != req_path and req_path.startswith(final_path + "/")
 _JINA_HTTP_ERROR = re.compile(r"Target URL returned error (\d{3})")
 _TITLE_LINE = re.compile(r"^Title:\s*(.*)$", re.MULTILINE)
 _HTML_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
@@ -120,9 +155,10 @@ def count_job_signals(text: str) -> int:
     return sum(1 for s in _JOB_SIGNALS if s in lowered)
 
 
-def validate_content(text: str) -> Tuple[bool, str]:
+def validate_content(text: str, url: Optional[str] = None) -> Tuple[bool, str]:
     """
     בודק שהטקסט שנסרק הוא באמת תיאור משרה, ולא דף התחברות / cookies / חסימה / משרה סגורה.
+    url: הכתובת שביקשנו - כדי לזהות הפניה לרשימת המשרות / דף הבית (משרה שהוסרה).
 
     Returns:
         (True, "ok") או (False, reason), כש-reason הוא אחד מ:
@@ -135,6 +171,10 @@ def validate_content(text: str) -> Tuple[bool, str]:
     http_error = _JINA_HTTP_ERROR.search(text)
     if http_error and http_error.group(1)[0] in "45":
         return False, f"http_error_{http_error.group(1)}"
+
+    final_url = _FINAL_URL.search(text)
+    if final_url and redirected_away(url, final_url.group(1)):
+        return False, "job_unavailable"
 
     lowered = text.lower()
 
