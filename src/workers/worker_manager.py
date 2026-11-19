@@ -11,6 +11,7 @@ from db.jobs_repository import (
     update_job_after_resolution,
 )
 from scraper_service.resolvers import URLResolver  # ייבוא ישיר
+from scraper_service.utils import failure_message
 from services.file_utils import CONTEXT_PATH, RESUME_PATH, read_text_file
 
 # טיפול גמיש בייבוא מנועים
@@ -96,8 +97,10 @@ async def scrape_worker():
                 logger.info(f"🕷️ [ID {job_id}] Scraper: starting to scrape {url}")
 
                 # הרצת ה-Scraper (מנסה Jina ואז Playwright)
+                trace = []
                 result = await asyncio.wait_for(
-                    asyncio.to_thread(scraper.scrape, url, job_id=job_id), timeout=60
+                    asyncio.to_thread(scraper.scrape, url, job_id=job_id, trace=trace),
+                    timeout=60,
                 )
 
                 if result and result.get("full_description"):
@@ -111,12 +114,12 @@ async def scrape_worker():
                         f"✅ [ID {job_id}] Scraper: completed successfully for {url}"
                     )
                 else:
+                    reasons = [a.get("reason") for a in trace]
                     logger.warning(
-                        f"⚠️ [ID {job_id}] Scraper: no content found for {url}"
+                        f"⚠️ [ID {job_id}] Scraper: no valid content for {url} ({reasons})"
                     )
-                    await mark_failed(
-                        job_id, "NO_DATA", "הסורק לא הצליח לחלץ תיאור משרה"
-                    )
+                    # הודעה ברורה למשתמש לפי סיבת הכישלון (התחברות / משרה סגורה / חסימה...)
+                    await mark_failed(job_id, "NO_DATA", failure_message(reasons))
 
             except asyncio.TimeoutError:
                 logger.error(f"⏲️ [ID {job_id}] Scraper timeout (60s) for {url}")
