@@ -186,8 +186,9 @@ async def test_maintenance_worker_runs_at_startup_and_survives_errors(monkeypatc
 async def test_start_background_workers_schedules_maintenance(monkeypatch):
     started = []
 
-    async def noop():
+    async def noop(*_args):
         started.append("reset")
+        return {}
 
     def fake_worker(name):
         async def run():

@@ -12,6 +12,7 @@ from typing import Iterable
 
 from db.jobs_repository import add_new_job, find_existing_job
 from services.link_extractor import extract_job_links, normalize_job_url
+from workers.queue_signal import notify
 
 
 def _scan_date(job: dict) -> str:
@@ -44,6 +45,8 @@ async def ingest_urls(urls: Iterable[str], source: str = "web") -> dict:
         existing = existing or await find_existing_job(url)
         skipped_urls.append(duplicate_info(url, existing or {}))
 
+    if added_urls:
+        notify("PENDING_RESOLVE")  # ה-resolver מתעורר מיד, בלי לחכות לבדיקה התקופתית
     return {
         "message": f"Processed {len(added_urls) + len(skipped_urls)} jobs",
         "added": len(added_urls),

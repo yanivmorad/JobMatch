@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Navbar from './Navbar';
 import ActiveJobsTab from './ActiveJobsTab';
 import AddJobsTab from './AddJobsTab/AddJobsTab';
@@ -8,6 +8,8 @@ import ProfileTab from './ProfileTab';
 import OverviewTab from './OverviewTab';
 import { taskService } from '../services/taskService';
 import { isInPipeline, isProcessing } from '../constants/jobStatus';
+
+const QUEUE_POLL_MS = 5000;
 
 const JobDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -35,17 +37,25 @@ const JobDashboard = () => {
   }, []);
 
   // --- 2. Polling (רענון אוטומטי למשרות בתהליך) ---
+  // קודם: כל 2 שניות כל המשרות, כולל תיאורים מלאים (עשרות KB למשרה) - עומס מיותר על
+  // השרת וה-DB בענן. עכשיו: כל 5 שניות בקשה קטנה למצב התור, ואת הרשימה המלאה מושכים
+  // רק כשמשהו השתנה (version).
+  const queueVersion = useRef(null);
   useEffect(() => {
-    const hasPending = jobs.some(j => isProcessing(j.status));
+    if (!jobs.some(j => isProcessing(j.status))) return;
 
-    let interval = null;
-    if (hasPending) {
-      interval = setInterval(fetchJobs, 2000);
-    }
-    
-    return () => {
-      if (interval) clearInterval(interval);
-    };
+    const interval = setInterval(async () => {
+      try {
+        const { version } = await taskService.getQueueSnapshot();
+        const changed = queueVersion.current !== null && version !== queueVersion.current;
+        queueVersion.current = version;
+        if (changed) fetchJobs();
+      } catch (err) {
+        console.error("Queue poll failed", err);
+      }
+    }, QUEUE_POLL_MS);
+
+    return () => clearInterval(interval);
   }, [jobs]);
 
   // --- 3. Actions (פונקציות עבודה) ---

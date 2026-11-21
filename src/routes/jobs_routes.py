@@ -11,6 +11,7 @@ from db.jobs_repository import (
     find_existing_job,
     get_all_jobs,
     manual_update_job_content,
+    queue_snapshot,
     update_application_status,
     update_manual_job,
 )
@@ -24,6 +25,7 @@ from models.job_models import (
 )
 from services.intake import duplicate_info, ingest_text, ingest_urls
 from services.link_extractor import extract_job_links, normalize_job_url
+from workers.queue_signal import notify
 
 logger = logging.getLogger("JobMatchServer")
 router = APIRouter(tags=["jobs"])
@@ -33,6 +35,15 @@ router = APIRouter(tags=["jobs"])
 async def get_jobs():
     """שליפת כל המשרות מה-SQL"""
     return await get_all_jobs()
+
+
+@router.get("/jobs/queue")
+async def get_queue_snapshot():
+    """
+    מצב התור בבקשה קטנה: ספירה לפי סטטוס + version. הדשבורד בודק את זה בזמן עיבוד
+    ומושך את /results (כל המשרות, כולל תיאורים מלאים) רק כש-version השתנה.
+    """
+    return await queue_snapshot()
 
 
 @router.post("/jobs/url")
@@ -90,6 +101,7 @@ async def add_text_job(submission: TextSubmission):
     )
     if not added:
         raise HTTPException(status_code=500, detail="Failed to add manual job")
+    notify("WAITING_FOR_AI")
     return {"message": "Manual job added to AI queue", "url": job_url}
 
 
@@ -127,6 +139,7 @@ async def manual_update(req: ManualUpdate):
     """עדכון ידני של משרה שכשלה בסריקה"""
     logger.info(f"✍️ Manual update for: {req.url}")
     await update_manual_job(req.url, req.company, req.title, req.description)
+    notify("WAITING_FOR_AI")
     return {"message": "Job updated and re-queued for AI"}
 
 
@@ -135,8 +148,10 @@ async def retry_endpoint(url: str):
     """ניסיון סריקה מחדש"""
     from db.jobs_repository import retry_job
 
-    await retry_job(url)
-    return {"message": "Job queued for retry"}
+    status = await retry_job(url)
+    if status:
+        notify(status)
+    return {"message": "Job queued for retry", "status": status}
 
 
 @router.post("/jobs/application-status")
@@ -158,6 +173,7 @@ async def update_job_status(req: ApplicationStatusUpdateRequest):
 async def update_job_manually(job_id: int, content: str = Body(..., embed=True)):
     try:
         await manual_update_job_content(job_id, content)
+        notify("WAITING_FOR_AI")
         return {"status": "success", "message": "Job moved to AI analysis"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

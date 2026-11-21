@@ -1,6 +1,4 @@
 """resolver_worker: fallback לדף הציבורי של HireMeTech, נרמול הקישור שפוענח וזיהוי כפילויות."""
-import asyncio
-
 import pytest
 
 from db.jobs_repository import add_new_job, get_job_by_url
@@ -11,7 +9,7 @@ pytestmark = pytest.mark.db
 
 
 async def _run_resolver_once(monkeypatch, resolve):
-    """מריץ את resolver_worker עד שהתור מתרוקן (ה-sleep הראשון עוצר את הלולאה)."""
+    """מעבד את כל המשרות שבתור הפענוח (resolve_next עד שאין עבודה)."""
 
     class FakeResolver:
         hireme_token = "t"
@@ -19,13 +17,8 @@ async def _run_resolver_once(monkeypatch, resolve):
         def resolve(self, url, job_id=None):
             return resolve(url)
 
-    async def stop(_seconds):
-        raise asyncio.CancelledError
-
-    monkeypatch.setattr(worker_manager, "URLResolver", FakeResolver)
-    monkeypatch.setattr(worker_manager.asyncio, "sleep", stop)
-    with pytest.raises(asyncio.CancelledError):
-        await worker_manager.resolver_worker()
+    while await worker_manager.resolve_next(FakeResolver()):
+        pass
 
 
 async def test_hiremetech_failure_falls_back_to_scraping_the_public_page(db, monkeypatch):

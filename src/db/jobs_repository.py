@@ -17,6 +17,11 @@ _IS_PLACEHOLDER_SQL = (
     "OR {col} ~* '^(https?://|manual)')"
 )
 
+# הערת "ניסיון N/3, מנסה שוב" (fail_or_retry) נמחקת כשהשלב מצליח; הערות אחרות
+# (למשל "HireMeTech: הטוקן פג - נותח לפי הדף הציבורי") נשארות
+_RETRY_NOTE_SUFFIX = "מנסה שוב)"
+_CLEAR_RETRY_NOTE_SQL = f"CASE WHEN error_log LIKE '%{_RETRY_NOTE_SUFFIX}' THEN NULL ELSE error_log END"
+
 # --- הגדרות וסטטוסים ---
 
 
@@ -93,13 +98,13 @@ async def fetch_next_job(current_status: str, next_status: str) -> Optional[dict
         async with conn.transaction():
             row = await conn.fetchrow(
                 """
-                UPDATE jobs 
-                SET status = $1, updated_at = NOW()
+                UPDATE jobs
+                SET status = $1, updated_at = NOW(), not_before = NULL
                 WHERE id = (
-                    SELECT id FROM jobs 
-                    WHERE status = $2 
-                    ORDER BY created_at ASC 
-                    LIMIT 1 
+                    SELECT id FROM jobs
+                    WHERE status = $2 AND (not_before IS NULL OR not_before <= NOW())
+                    ORDER BY created_at ASC
+                    LIMIT 1
                     FOR UPDATE SKIP LOCKED
                 )
                 RETURNING *
@@ -139,12 +144,13 @@ async def finish_scrape(
     """
     pool = await get_pool()
     await pool.execute(
-        """
+        f"""
         UPDATE jobs SET
             status = 'WAITING_FOR_AI',
             company = COALESCE($2, company),
             job_title = COALESCE($3, job_title),
-            full_description = $4, scraped_at = NOW(), updated_at = NOW()
+            full_description = $4, scraped_at = NOW(), updated_at = NOW(),
+            error_log = {_CLEAR_RETRY_NOTE_SQL}
         WHERE id = $1
         """,
         job_id,
@@ -175,6 +181,7 @@ async def finish_analysis(job_id: int, result: dict):
         f"""
         UPDATE jobs SET
             status = 'COMPLETED', analysis_result = $2, analyzed_at = NOW(),
+            error_log = {_CLEAR_RETRY_NOTE_SQL},
             company = CASE WHEN $3::text IS NOT NULL AND {company_cond} THEN $3 ELSE company END,
             job_title = CASE WHEN $4::text IS NOT NULL AND {title_cond} THEN $4 ELSE job_title END
         WHERE id = $1
@@ -185,6 +192,111 @@ async def finish_analysis(job_id: int, result: dict):
         title,
         list(PLACEHOLDER_VALUES),
     )
+
+
+async def requeue_job(job_id: int, status: str, note: Optional[str] = None):
+    """
+    מחזיר משרה לתור בלי לספור ניסיון כושל (למשל 429: המכסה נגמרה - זו לא תקלה של המשרה).
+    """
+    pool = await get_pool()
+    await pool.execute(
+        """
+        UPDATE jobs SET status = $2, error_log = COALESCE($3, error_log),
+            not_before = NULL, updated_at = NOW()
+        WHERE id = $1
+        """,
+        job_id,
+        status,
+        note,
+    )
+
+
+async def requeue_in_progress() -> int:
+    """כיבוי מסודר: משרות "בטיפול" חוזרות לתור בלי להיספר כניסיון. מחזיר כמה."""
+    pool = await get_pool()
+    total = 0
+    for stuck, (retry_status, _failed) in _IN_PROGRESS.items():
+        result = await pool.execute(
+            "UPDATE jobs SET status = $2::job_status WHERE status = $1::job_status",
+            stuck,
+            retry_status,
+        )
+        total += int(result.split()[-1])
+    return total
+
+
+async def fail_or_retry(
+    job_id: int,
+    retry_status: str,
+    failed_status: str,
+    error_msg: str,
+    max_attempts: int = 3,
+    base_delay_seconds: int = 30,
+) -> str:
+    """
+    תקלה זמנית (timeout / 5xx / רשת): retry_count++. כל עוד לא עברנו max_attempts המשרה
+    חוזרת לתור עם backoff (30s, 60s, 120s...) דרך not_before; אחרת - failed_status.
+    מחזיר את הסטטוס החדש.
+    """
+    pool = await get_pool()
+    return await pool.fetchval(
+        """
+        UPDATE jobs SET
+            retry_count = retry_count + 1,
+            status = (CASE WHEN retry_count + 1 < $5 THEN $2 ELSE $3 END)::job_status,
+            not_before = CASE WHEN retry_count + 1 < $5
+                              THEN NOW() + make_interval(secs => $6 * power(2, retry_count))
+                              ELSE NULL END,
+            error_log = CASE WHEN retry_count + 1 < $5
+                             THEN $4 || ' (ניסיון ' || (retry_count + 1) || '/' || $5 || ', מנסה שוב)'
+                             ELSE $4 END,
+            updated_at = NOW()
+        WHERE id = $1
+        RETURNING status::text
+        """,
+        job_id,
+        retry_status,
+        failed_status,
+        error_msg,
+        max_attempts,
+        base_delay_seconds,
+    )
+
+
+async def increment_api_usage(day, model: str) -> int:
+    """סופר בקשה ל-API של ה-AI ביום הנתון. מחזיר את המספר המעודכן."""
+    pool = await get_pool()
+    return await pool.fetchval(
+        """
+        INSERT INTO api_usage (day, model, requests) VALUES ($1, $2, 1)
+        ON CONFLICT (day, model) DO UPDATE SET requests = api_usage.requests + 1
+        RETURNING requests
+        """,
+        day,
+        model,
+    )
+
+
+async def get_api_usage(day, model: str) -> int:
+    pool = await get_pool()
+    return await pool.fetchval(
+        "SELECT COALESCE((SELECT requests FROM api_usage WHERE day = $1 AND model = $2), 0)",
+        day,
+        model,
+    )
+
+
+async def queue_snapshot() -> dict:
+    """
+    מצב התור בבקשה קטנה אחת: ספירה לפי סטטוס + "גרסה" (העדכון האחרון).
+    הדשבורד בודק את זה בזמן עיבוד, ומושך את כל הרשימה רק כשהגרסה השתנתה.
+    """
+    pool = await get_pool()
+    rows = await pool.fetch("SELECT status::text AS status, COUNT(*) AS n FROM jobs GROUP BY status")
+    version = await pool.fetchval(
+        "SELECT COALESCE(EXTRACT(EPOCH FROM MAX(updated_at)), 0)::text || ':' || COUNT(*) FROM jobs"
+    )
+    return {"counts": {r["status"]: r["n"] for r in rows}, "version": version}
 
 
 async def mark_failed(job_id: int, status: str, error_msg: str):
@@ -357,7 +469,7 @@ async def update_manual_job(url: str, company: str, title: str, description: str
 # --- תחזוקה, מחיקה ושיקום ---
 
 
-async def retry_job(url: str):
+async def retry_job(url: str) -> Optional[str]:
     """
     מחזיר משרה לתור, לשלב שבו היא נכשלה:
     - משרה ידנית, או כישלון AI כשיש כבר תיאור -> WAITING_FOR_AI
@@ -366,7 +478,7 @@ async def retry_job(url: str):
     (קודם הכל הלך לסריקה: משרה ידנית ניסתה לסרוק URL מזויף, וכישלון resolve דילג על הפענוח)
     """
     pool = await get_pool()
-    await pool.execute(
+    return await pool.fetchval(
         """
         UPDATE jobs SET
             status = (CASE
@@ -376,26 +488,53 @@ async def retry_job(url: str):
                 WHEN status IN ('FAILED_RESOLVE', 'DUPLICATE') THEN 'PENDING_RESOLVE'
                 ELSE 'WAITING_FOR_SCRAPE'
             END)::job_status,
-            error_log = NULL, is_archived = FALSE
+            error_log = NULL, is_archived = FALSE,
+            retry_count = 0, not_before = NULL  -- ניסיון ידני מתחיל ספירה מחדש
         WHERE url = $1
+        RETURNING status::text
         """,
         url,
     )
 
 
-async def reset_stuck_jobs():
-    """מנגנון בטיחות: משחרר משרות שנתקעו בסטטוס 'בטיפול' אם השרת קרס באמצע עבודה."""
-    pool = await get_pool()
-    await pool.execute(
-        "UPDATE jobs SET status = 'PENDING_RESOLVE' WHERE status = 'RESOLVING'"
-    )
+# סטטוס "בטיפול" -> (חזרה לתור, כישלון סופי)
+_IN_PROGRESS = {
+    "RESOLVING": ("PENDING_RESOLVE", "FAILED_RESOLVE"),
+    "SCRAPING": ("WAITING_FOR_SCRAPE", "FAILED_SCRAPE"),
+    "ANALYZING": ("WAITING_FOR_AI", "FAILED_ANALYSIS"),
+}
 
-    await pool.execute(
-        "UPDATE jobs SET status = 'WAITING_FOR_SCRAPE' WHERE status = 'SCRAPING'"
-    )
-    await pool.execute(
-        "UPDATE jobs SET status = 'WAITING_FOR_AI' WHERE status = 'ANALYZING'"
-    )
+
+async def reset_stuck_jobs(max_attempts: int = 3) -> dict:
+    """
+    מנגנון בטיחות בהפעלה: משרות שנשארו "בטיפול" (השרת קרס / הופעל מחדש באמצע) חוזרות לתור.
+    כל קריסה נספרת כניסיון: משרה שמפילה את השרת שוב ושוב (למשל Playwright שחורג
+    מהזיכרון בשרת של 512MB) נכשלת אחרי max_attempts, במקום לולאה אינסופית של קריסות.
+    מחזיר {סטטוס: כמה משרות טופלו}.
+    """
+    pool = await get_pool()
+    counts = {}
+    for stuck, (retry_status, failed_status) in _IN_PROGRESS.items():
+        rows = await pool.fetch(
+            """
+            UPDATE jobs SET
+                retry_count = retry_count + 1,
+                status = (CASE WHEN retry_count + 1 < $4 THEN $2 ELSE $3 END)::job_status,
+                error_log = CASE WHEN retry_count + 1 < $4 THEN error_log
+                                 ELSE 'העיבוד נקטע ' || (retry_count + 1) || ' פעמים (השרת הופעל מחדש באמצע) - נעצר'
+                            END,
+                not_before = NULL
+            WHERE status = $1
+            RETURNING status::text
+            """,
+            stuck,
+            retry_status,
+            failed_status,
+            max_attempts,
+        )
+        for r in rows:
+            counts[r["status"]] = counts.get(r["status"], 0) + 1
+    return counts
 
 
 async def auto_archive_old_applications(days: int = 30) -> int:

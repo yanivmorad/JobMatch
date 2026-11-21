@@ -45,6 +45,12 @@ export const taskService = {
     return response.data;
   },
 
+  // מצב התור בבקשה קטנה (ספירה לפי סטטוס + version) - ל-polling בזמן עיבוד
+  getQueueSnapshot: async () => {
+    const response = await apiClient.get('/jobs/queue');
+    return response.data;
+  },
+
   // הוספת משרות חדשות (URLs)
   addJobUrls: async (urls) => {
     const response = await apiClient.post('/jobs/url', { urls });

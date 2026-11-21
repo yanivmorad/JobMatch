@@ -152,6 +152,8 @@ async def init_db(conn):
             applied_at TIMESTAMP WITH TIME ZONE,
             is_archived BOOLEAN DEFAULT FALSE,
             error_log TEXT,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            not_before TIMESTAMP WITH TIME ZONE,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             scraped_at TIMESTAMP WITH TIME ZONE,
@@ -172,6 +174,26 @@ async def init_db(conn):
     # ובלי source_url אותה משרה שנשלחה שוב לא זוהתה ככפולה עד אחרי פענוח נוסף בדפדפן.
     await conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_url TEXT")
     await conn.execute("UPDATE jobs SET source_url = url WHERE source_url IS NULL")
+    # retry_count: כמה ניסיונות כושלים (תקלה זמנית / קריסת שרת באמצע) - אחרי MAX_JOB_ATTEMPTS המשרה נכשלת.
+    # not_before: ניסיון חוזר מתוזמן (backoff) - ה-worker לא לוקח את המשרה לפני הזמן הזה.
+    await conn.execute(
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0"
+    )
+    await conn.execute(
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS not_before TIMESTAMP WITH TIME ZONE"
+    )
+
+    # שימוש יומי ב-API של ה-AI (לפי יום פסיפיק - כמו איפוס המכסה של Gemini), שורד הפעלה מחדש
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS api_usage (
+            day DATE NOT NULL,
+            model TEXT NOT NULL,
+            requests INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (day, model)
+        )
+        """
+    )
 
     # 4. טריגר updated_at
     await conn.execute(
