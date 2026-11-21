@@ -36,18 +36,21 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
 
   return (
     <div className="w-full min-h-screen bg-slate-50/50" dir="rtl">
-      <ManualFixModal 
-        isOpen={isFixModalOpen}
-        onClose={() => setIsFixModalOpen(false)}
-        job={jobToFix}
-        onSubmit={async (jobId, title, content) => {
-          const success = await handleManualUpdate(jobId, content);
-          if (success) {
-            setIsFixModalOpen(false);
-          }
-        }}
-        isSubmitting={submitStatus === 'sending'}
-      />
+      {isFixModalOpen && jobToFix && (
+        <ManualFixModal
+          key={jobToFix.id ?? jobToFix.url}
+          isOpen={isFixModalOpen}
+          onClose={() => setIsFixModalOpen(false)}
+          job={jobToFix}
+          onSubmit={async (jobId, title, content) => {
+            const success = await handleManualUpdate(jobId, content);
+            if (success) {
+              setIsFixModalOpen(false);
+            }
+          }}
+          isSubmitting={submitStatus === 'sending'}
+        />
+      )}
 
       <div className="max-w-[1600px] mx-auto w-full px-6 py-10 flex flex-col gap-10">
 <section className="flex flex-col items-center text-center gap-4 mb-4">
@@ -82,7 +85,7 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
               textInput={textInput}
               setTextInput={setTextInput}
               submitStatus={submitStatus}
-              onSubmit={(text, title) => handleTextSubmit(text, title, null, false, () => {
+              onSubmit={(text, title) => handleTextSubmit(text, title, null, () => {
                 setTextInput('');
                 setTextTitle('');
               })}

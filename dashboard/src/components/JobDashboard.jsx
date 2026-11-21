@@ -12,7 +12,6 @@ import { isInPipeline, isProcessing } from '../constants/jobStatus';
 const JobDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [jobs, setJobs] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
   // --- 1. שליפת נתונים ---
@@ -20,14 +19,19 @@ const JobDashboard = () => {
     try {
       const data = await taskService.getJobs();
       setJobs(data);
-      setLoading(false);
     } catch (err) {
       console.error("Connection Error", err);
     }
   };
 
+  // טעינה ראשונית: setState רק ב-callback של ה-Promise (לא סינכרונית בתוך ה-effect),
+  // ולא אחרי שהקומפוננטה ירדה מהמסך
   useEffect(() => {
-    fetchJobs();
+    let cancelled = false;
+    taskService.getJobs()
+      .then(data => { if (!cancelled) setJobs(data); })
+      .catch(err => console.error("Connection Error", err));
+    return () => { cancelled = true; };
   }, []);
 
   // --- 2. Polling (רענון אוטומטי למשרות בתהליך) ---
@@ -173,9 +177,8 @@ const JobDashboard = () => {
         <div className="w-full max-w-[90%] mx-auto px-4 py-8 flex flex-col">          
           <div className="w-full transition-all duration-500 ease-in-out"> 
             {activeTab === 'dashboard' && (
-              <OverviewTab 
-                jobs={filteredJobs}
-                activeJobs={activeJobs} 
+              <OverviewTab
+                activeJobs={activeJobs}
                 appliedJobs={appliedJobs}
                 pendingJobs={pendingJobs}
                 onAction={handleCardAction}

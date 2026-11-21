@@ -27,9 +27,8 @@ import { AppliedJobsTable } from './AppliedJobsTab/AppliedJobsTab';
 import { ActiveQueueList } from './ActiveQueueList';
 import { isFailed, isProcessing } from '../constants/jobStatus';
 
-const OverviewTab = ({ 
-  jobs, 
-  activeJobs, 
+const OverviewTab = ({
+  activeJobs,
   appliedJobs, 
   pendingJobs, 
   onSwitchTab, 
