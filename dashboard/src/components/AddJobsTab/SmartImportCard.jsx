@@ -1,20 +1,36 @@
-import React, { useMemo } from 'react';
-import { Link as LinkIcon, Send, Loader2, AlertCircle, List, Globe, Hash } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Link as LinkIcon, Send, Loader2, AlertCircle, List, Globe, Ban } from 'lucide-react';
+import { taskService } from '../../services/taskService';
 
-const SmartImportCard = ({ 
-  rawInput, 
-  setRawInput, 
-  duplicateJobs, 
-  setDuplicateJobs, 
-  submitStatus, 
-  onSubmit 
+const EMPTY_PREVIEW = { text: '', jobs: [], ignored: [] };
+
+const SmartImportCard = ({
+  rawInput,
+  setRawInput,
+  duplicateJobs,
+  setDuplicateJobs,
+  submitStatus,
+  onSubmit
 }) => {
-  const parsedLinks = useMemo(() => {
-    if (!rawInput) return [];
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const matches = rawInput.match(urlRegex) || [];
-    return [...new Set(matches.map(link => link.replace(/[.,;]$/, "")))];
-  }, [rawInput]);
+  // החילוץ נעשה בשרת (אותה לוגיקה שתשמש גם את הבוט): מסנן קישורי אפליקציות / קבוצות /
+  // דפים כלליים, מוריד utm, ומפריד קישור שהודבק צמוד לטקסט
+  const [preview, setPreview] = useState(EMPTY_PREVIEW);
+  const hasText = rawInput.trim().length > 0;
+
+  useEffect(() => {
+    if (!hasText) return;
+    const timer = setTimeout(() => {
+      taskService.extractLinks(rawInput)
+        .then(res => setPreview({ text: rawInput, jobs: res.jobs, ignored: res.ignored }))
+        .catch(() => setPreview({ ...EMPTY_PREVIEW, text: rawInput, error: true }));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [rawInput, hasText]);
+
+  const parsedLinks = hasText ? preview.jobs : [];
+  const ignoredLinks = hasText ? preview.ignored : [];
+  const isChecking = hasText && preview.text !== rawInput;
+  const previewError = hasText && preview.error;
 
   return (
     <div className="group relative bg-white/70 backdrop-blur-xl rounded-[2.5rem] border border-white shadow-[0_20px_50px_rgba(0,0,0,0.05)] overflow-hidden transition-all hover:shadow-[0_20px_60px_rgba(0,0,0,0.08)]">
@@ -70,14 +86,29 @@ const SmartImportCard = ({
           {/* תצוגת תוצאות (Live Preview) */}
           <div className="lg:col-span-5 flex flex-col gap-3">
             <div className="h-72 bg-slate-50/30 border-2 border-dashed border-slate-200/60 rounded-[2rem] p-6 overflow-y-auto custom-scrollbar">
-              {parsedLinks.length > 0 ? (
+              {previewError ? (
+                <div className="h-full flex flex-col items-center justify-center text-rose-500 gap-2 text-sm font-medium">
+                  <AlertCircle size={24} />
+                  השרת לא זמין - אי אפשר לזהות קישורים
+                </div>
+              ) : (parsedLinks.length > 0 || ignoredLinks.length > 0) ? (
                 <div className="flex flex-wrap gap-2">
-                  {parsedLinks.map((link, i) => (
-                    <div key={i} className="flex items-center gap-2 bg-white border border-slate-100 px-3 py-2 rounded-xl shadow-sm hover:border-blue-200 transition-colors max-w-full">
+                  {parsedLinks.map((link) => (
+                    <div key={link} className="flex items-center gap-2 bg-white border border-slate-100 px-3 py-2 rounded-xl shadow-sm hover:border-blue-200 transition-colors max-w-full">
                       <div className="bg-blue-50 p-1 rounded-md text-blue-500 shrink-0">
                         <Globe size={12} />
                       </div>
-                      <span className="text-[11px] text-slate-600 font-mono truncate">{link}</span>
+                      <span className="text-[11px] text-slate-600 font-mono truncate" dir="ltr">{link}</span>
+                    </div>
+                  ))}
+                  {ignoredLinks.map(({ url, reason }) => (
+                    <div key={url} title={url} className="flex items-center gap-2 bg-slate-50 border border-dashed border-slate-200 px-3 py-2 rounded-xl max-w-full opacity-70">
+                      <div className="p-1 rounded-md text-slate-400 shrink-0">
+                        <Ban size={12} />
+                      </div>
+                      <span className="text-[11px] text-slate-500 truncate">
+                        <span className="font-bold">יסונן: </span>{reason}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -86,7 +117,7 @@ const SmartImportCard = ({
                   <div className="bg-white p-4 rounded-full shadow-inner">
                     <List size={32} strokeWidth={1.5} className="text-slate-300" />
                   </div>
-                  <p className="text-sm font-medium">ממתין להזנת נתונים...</p>
+                  <p className="text-sm font-medium">{isChecking ? 'מזהה קישורי משרות...' : hasText ? 'לא נמצאו קישורי משרות' : 'ממתין להזנת נתונים...'}</p>
                 </div>
               )}
             </div>
@@ -107,17 +138,17 @@ const SmartImportCard = ({
         <div className="flex justify-center md:justify-end pt-6">
 <button 
   onClick={() => {
-    // 1. קודם כל שומרים את הלינקים שזיהינו במשתנה זמני
-    const linksToSend = [...parsedLinks];
-    
+    // 1. שומרים את הטקסט (השרת יחלץ ממנו את הקישורים - אותה לוגיקה כמו בתצוגה המקדימה)
+    const textToSend = rawInput;
+
     // 2. מנקים את הלוח מיד (המשתמש רואה שהכל נעלם)
     setRawInput('');
     setDuplicateJobs([]);
-    
-    // 3. שולחים את הלינקים ששמרנו לשרת
-    onSubmit(linksToSend);
+
+    // 3. שולחים לשרת
+    onSubmit(textToSend);
   }}
-  disabled={parsedLinks.length === 0 || submitStatus === 'sending'}
+  disabled={parsedLinks.length === 0 || isChecking || submitStatus === 'sending'}
   className={`group relative flex items-center gap-4 py-4 px-12 rounded-2xl font-black transition-all overflow-hidden
     ${parsedLinks.length > 0 
       ? 'bg-slate-900 text-white hover:scale-105 active:scale-95 shadow-2xl' 

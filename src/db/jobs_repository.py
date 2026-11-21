@@ -68,8 +68,8 @@ async def add_new_job(
     async with pool.acquire() as conn:
         result = await conn.execute(
             """
-            INSERT INTO jobs (url, status, source, full_description, company, job_title)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO jobs (url, source_url, status, source, full_description, company, job_title)
+            VALUES ($1, $1, $2, $3, $4, $5, $6)
             ON CONFLICT (url) DO NOTHING
             """,
             url,
@@ -249,6 +249,24 @@ async def get_job_by_url(url: str) -> Optional[dict]:
     """שליפת מידע מלא על משרה בודדת לפי כתובת ה-URL שלה."""
     pool = await get_pool()
     row = await pool.fetchrow("SELECT * FROM jobs WHERE url = $1", url)
+    return dict(row) if row else None
+
+
+async def find_existing_job(url: str, exclude_id: Optional[int] = None) -> Optional[dict]:
+    """
+    משרה קיימת עם אותו קישור: הנוכחי (url) או המקורי שהמשתמש שלח (source_url).
+    exclude_id: לא להחזיר את המשרה עצמה (בבדיקת כפילות אחרי פענוח).
+    """
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT * FROM jobs
+        WHERE (url = $1 OR source_url = $1) AND ($2::int IS NULL OR id <> $2)
+        ORDER BY id LIMIT 1
+        """,
+        url,
+        exclude_id,
+    )
     return dict(row) if row else None
 
 

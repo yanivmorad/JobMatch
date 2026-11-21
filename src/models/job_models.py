@@ -1,11 +1,17 @@
 # src/models/job_models.py
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class JobSubmission(BaseModel):
     urls: List[str]
+
+
+class RawTextSubmission(BaseModel):
+    """טקסט גולמי (הודעות וואטסאפ / פוסטים) - השרת מחלץ ממנו את קישורי המשרות."""
+
+    text: str = Field(..., max_length=200_000)
 
 
 class TextSubmission(BaseModel):

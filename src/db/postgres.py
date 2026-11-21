@@ -140,6 +140,7 @@ async def init_db(conn):
         CREATE TABLE IF NOT EXISTS jobs (
             id SERIAL PRIMARY KEY,
             url TEXT UNIQUE NOT NULL,
+            source_url TEXT,
             status job_status DEFAULT 'NEW',
             company TEXT DEFAULT 'Identifying...',
             job_title TEXT DEFAULT 'Identifying...',
@@ -167,6 +168,10 @@ async def init_db(conn):
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS application_status TEXT DEFAULT 'pending'"
     )
     await _migrate_applied_at(conn)
+    # source_url = הקישור כפי שהמשתמש שלח אותו. url מוחלף אחרי פענוח (HireMeTech -> אתר החברה),
+    # ובלי source_url אותה משרה שנשלחה שוב לא זוהתה ככפולה עד אחרי פענוח נוסף בדפדפן.
+    await conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_url TEXT")
+    await conn.execute("UPDATE jobs SET source_url = url WHERE source_url IS NULL")
 
     # 4. טריגר updated_at
     await conn.execute(
@@ -196,6 +201,9 @@ async def init_db(conn):
 
     # 5. אינדקסים
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_source_url ON jobs(source_url)"
+    )
     await conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs(updated_at)"
     )

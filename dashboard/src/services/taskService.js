@@ -51,6 +51,18 @@ export const taskService = {
     return response.data;
   },
 
+  // טקסט גולמי (הודעות וואטסאפ וכו'): השרת מחלץ את קישורי המשרות ומכניס אותם לתור
+  addRawText: async (text) => {
+    const response = await apiClient.post('/jobs/raw', { text });
+    return response.data;
+  },
+
+  // תצוגה מקדימה: אילו קישורים יוכנסו ואילו יסוננו (לא שומר כלום)
+  extractLinks: async (text) => {
+    const response = await apiClient.post('/jobs/extract-links', { text });
+    return response.data;
+  },
+
   // הוספת משרה ידנית (טקסט חופשי)
   addManualJob: async (text, title, originalUrl = null) => {
     const response = await apiClient.post('/jobs/text', {
