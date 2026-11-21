@@ -77,6 +77,31 @@ class AIRateLimiter:
             self._day_count = await self._get_usage(day, self.model) if self._get_usage else 0
         return self._day_count
 
+    def available_at(self) -> Optional[datetime]:
+        """None = זמין עכשיו; אחרת - מתי ההפסקה (429 / תקרה יומית) נגמרת."""
+        if self.paused_until and self._now() < self.paused_until:
+            return self.paused_until
+        return None
+
+    async def try_acquire(self) -> bool:
+        """
+        לשרשרת מודלים: False מיד אם המודל בהפסקה (429 / מכסה יומית) - כדי לעבור למודל הבא
+        בלי לחכות. אחרת ממתין רק את מרווח ה-RPM (קצר) ומחזיר True.
+        """
+        now = self._now()
+        if self.available_at():
+            return False
+        if self.paused_until:
+            self.paused_until = self.pause_reason = None
+        if self.rpd and await self._requests_today() >= self.rpd:
+            self._pause(next_pacific_midnight(now), f"GEMINI_RPD={self.rpd} reached")
+            return False
+        if self._last_request_at and self.min_interval:
+            wait = self.min_interval - (now - self._last_request_at).total_seconds()
+            if wait > 0:
+                await self._sleep(wait)
+        return True
+
     async def wait_until_allowed(self) -> None:
         """מחכה עד שמותר לשלוח בקשה (הפסקה אחרי 429 / תקרה יומית / מרווח RPM)."""
         while True:
@@ -146,3 +171,34 @@ class AIRateLimiter:
             "pause_reason": self.pause_reason,
             "last_rate_limit": self.last_rate_limit,
         }
+
+
+class ModelPool:
+    """
+    שרשרת מודלים של Gemini (GEMINI_MODELS="a,b,c"). המכסה היומית החינמית היא לכל מודל
+    בנפרד (quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier, נמדד: 20 ביום ל-
+    gemini-2.5-flash-lite), כך ששרשרת מכפילה את הקיבולת היומית בלי עלות.
+    תמיד משתמשים במודל הראשון שזמין; כשהוא מגיע למכסה - עוברים לבא אחריו, וחוזרים
+    לראשון אחרי האיפוס. מחיר: ציונים של מודלים שונים פחות ברי-השוואה (נשמר איזה מודל ניתח).
+    """
+
+    def __init__(self, members, now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep, max_idle_check: float = 300):
+        self.members = list(members)  # [(analyzer, limiter)]
+        self._now = now
+        self._sleep = sleep
+        self.max_idle_check = max_idle_check
+
+    async def acquire(self):
+        """(analyzer, limiter) של המודל הראשון שמותר לשלוח אליו; ממתין אם כולם בהפסקה."""
+        while True:
+            for analyzer, limiter in self.members:
+                if await limiter.try_acquire():
+                    return analyzer, limiter
+            soonest = min(l.available_at() or self._now() for _, l in self.members)
+            wait = max((soonest - self._now()).total_seconds(), 1)
+            logger.info(f"⏸️ All AI models paused - next one available at {soonest.isoformat()}")
+            await self._sleep(min(wait, self.max_idle_check))
+
+    def status(self) -> list:
+        return [limiter.status() for _, limiter in self.members]

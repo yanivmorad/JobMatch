@@ -44,14 +44,14 @@ from scraper_service.utils import failure_message
 from services.file_utils import CONTEXT_PATH, RESUME_PATH, read_text_file
 from services.link_extractor import normalize_job_url
 from workers.queue_signal import IdleWaiter, notify
-from workers.rate_limiter import AIRateLimiter
+from workers.rate_limiter import AIRateLimiter, ModelPool
 
 # טיפול גמיש בייבוא מנועים
 try:
-    from engine import JobAnalyzer, RateLimitError
+    from engine import JobAnalyzer, RateLimitError, configured_models
     from scraper_service.scraper import Scraper
 except ImportError:
-    from src.engine import JobAnalyzer, RateLimitError
+    from src.engine import JobAnalyzer, RateLimitError, configured_models
     from src.scraper_service.scraper import Scraper
 
 logger = logging.getLogger("Workers")
@@ -74,7 +74,7 @@ def max_attempts() -> int:
 
 _state: Dict[str, dict] = {}
 _tasks: Dict[str, asyncio.Task] = {}
-ai_limiter: AIRateLimiter = None  # נוצר ב-ai_worker (צריך את שם המודל)
+ai_pool: ModelPool = None  # נוצר ב-ai_worker (צריך את שמות המודלים)
 
 
 def _touch(name: str, **fields) -> None:
@@ -91,8 +91,8 @@ def workers_status() -> dict:
             "running": bool(task and not task.done()),
             **_state.get(name, {}),
         }
-    if ai_limiter:
-        out["ai_worker"]["rate_limit"] = ai_limiter.status()
+    if ai_pool:
+        out["ai_worker"]["models"] = ai_pool.status()
     return out
 
 
@@ -192,14 +192,14 @@ async def scrape_next(scraper: Scraper) -> bool:
 # --- שלב 3: ניתוח AI ---
 
 
-async def analyze_next(analyzer: JobAnalyzer, limiter: AIRateLimiter) -> bool:
+async def analyze_next(pool: ModelPool) -> bool:
     # ממתינים לתור של המכסה *לפני* שלוקחים משרה, כדי שלא תישאר ב-ANALYZING בזמן ההמתנה
-    await limiter.wait_until_allowed()
+    analyzer, limiter = await pool.acquire()
     job = await fetch_next_job("WAITING_FOR_AI", "ANALYZING")
     if not job:
         return False
     job_id, url = job["id"], job.get("url", "No URL")
-    logger.info(f"🧠 [ID {job_id}] AI: starting analysis for {url}")
+    logger.info(f"🧠 [ID {job_id}] AI ({analyzer.model_name}): starting analysis for {url}")
 
     resume = read_text_file(RESUME_PATH)
     context = read_text_file(CONTEXT_PATH)
@@ -274,18 +274,24 @@ async def scrape_worker():
     await _run_loop("scrape_worker", "WAITING_FOR_SCRAPE", lambda: scrape_next(scraper))
 
 
+def build_model_pool() -> ModelPool:
+    members = []
+    for model in configured_models():
+        limiter = AIRateLimiter(model, get_usage=get_api_usage, add_usage=increment_api_usage)
+        members.append((JobAnalyzer(model), limiter))
+    return ModelPool(members)
+
+
 async def ai_worker():
-    global ai_limiter
+    global ai_pool
     logger.info("🤖 AI Worker started")
-    analyzer = JobAnalyzer()
-    ai_limiter = AIRateLimiter(
-        analyzer.model_name, get_usage=get_api_usage, add_usage=increment_api_usage
-    )
+    ai_pool = build_model_pool()
+    first = ai_pool.members[0][1]
     logger.info(
-        f"🤖 AI: model={analyzer.model_name}, GEMINI_RPM={ai_limiter.rpm}, "
-        f"GEMINI_RPD={ai_limiter.rpd or 'no local cap'}"
+        f"🤖 AI: models={[a.model_name for a, _ in ai_pool.members]}, GEMINI_RPM={first.rpm}, "
+        f"GEMINI_RPD={first.rpd or 'no local cap'}"
     )
-    await _run_loop("ai_worker", "WAITING_FOR_AI", lambda: analyze_next(analyzer, ai_limiter))
+    await _run_loop("ai_worker", "WAITING_FOR_AI", lambda: analyze_next(ai_pool))
 
 
 MAINTENANCE_INTERVAL_SECONDS = 24 * 60 * 60

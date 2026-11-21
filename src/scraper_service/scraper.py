@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import time
 from typing import List, Optional
 from urllib.parse import urlparse
@@ -7,6 +8,7 @@ from urllib.parse import urlparse
 import requests
 from dotenv import load_dotenv
 
+from scraper_service.resolvers import is_hiremetech
 from scraper_service.site_apis import fetch_from_site_api
 from scraper_service.utils import clean_text, validate_content
 
@@ -27,6 +29,7 @@ logger = logging.getLogger(__name__)
 SITE_SELECTORS = {
     "linkedin.com": ".top-card-layout, .description__text, .show-more-less-html__markup",
 }
+_HIREMETECH_TITLE_SUFFIX = re.compile(r"\s+at\s+Company\s*\|\s*HireMe\b", re.IGNORECASE)
 
 
 class Scraper:
@@ -60,6 +63,18 @@ class Scraper:
         trace = trace if trace is not None else []
         start_time = time.time()
 
+        result = self._scrape(target_url, job_id, id_tag, trace, start_time)
+        if result and is_hiremetech(target_url):
+            # הדף הציבורי: "RPA Developer at Company | HireMe" - ה-AI לקח את "Company | HireMe"
+            # כשם החברה. מורידים את החלק הזה מהכותרת ומציינים שהחברה מוסתרת.
+            result["full_description"] = _HIREMETECH_TITLE_SUFFIX.sub(
+                " (שם החברה מוסתר בדף הציבורי של HireMeTech)", result["full_description"], count=1
+            )
+        return result
+
+    def _scrape(
+        self, target_url: str, job_id: Optional[int], id_tag: str, trace: List[dict], start_time: float
+    ) -> Optional[dict]:
         # 0. API ציבורי של מערכת הגיוס (Workday / BambooHR): דפי SPA ש-Jina מקבל מהם שלד ריק
         api_result = self._try_site_api(target_url, id_tag, trace)
         if api_result is not None:

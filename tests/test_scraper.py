@@ -137,3 +137,53 @@ def test_other_jina_errors_do_not_retry(make_scraper):
 
     assert [a["method"] for a in trace] == ["jina", "playwright"]
     assert len(s.session.calls) == 1
+
+
+# --- HireMeTech: הכותרת הציבורית "X at Company | HireMe" ---
+
+
+def test_hiremetech_public_title_does_not_become_the_company(monkeypatch):
+    """באג (E2E): ה-AI החזיר "Company | HireMe" כשם החברה לכל משרות HireMeTech."""
+    from scraper_service.scraper import Scraper
+    from services.job_fields import clean_field
+
+    s = Scraper()
+    page = "Title: RPA Developer (UiPath) at Company | HireMe\n\nRequirements: 2+ years of experience with UiPath"
+    monkeypatch.setattr(s, "_scrape", lambda *a: {"source": "jina", "full_description": page})
+
+    out = s.scrape("https://hiremetech.com/job/153667177")["full_description"]
+    assert "Company | HireMe" not in out
+    assert out.startswith("Title: RPA Developer (UiPath) (שם החברה מוסתר")
+    # גם אם ה-AI מחזיר את זה - זה placeholder ולא נכתב לעמודה
+    assert clean_field("Company | HireMe") is None and clean_field("Company") is None
+
+
+def test_other_sites_titles_are_untouched(monkeypatch):
+    from scraper_service.scraper import Scraper
+
+    s = Scraper()
+    page = "Title: Engineer at Company | HireMe\n\nRequirements: experience"
+    monkeypatch.setattr(s, "_scrape", lambda *a: {"source": "jina", "full_description": page})
+    assert s.scrape("https://jobs.lever.co/acme/1")["full_description"] == page
+
+
+def test_scrape_falls_back_to_playwright_through_the_public_method(monkeypatch):
+    """הנתיב המלא scrape() -> Jina נכשל -> Playwright (תפס NameError על job_id אחרי refactor)."""
+    from scraper_service import scraper as scraper_module
+    from scraper_service.scraper import Scraper
+
+    s = Scraper()
+    monkeypatch.setattr(scraper_module, "HAS_PLAYWRIGHT", True)
+    monkeypatch.setattr(s, "_try_jina", lambda url, tag, trace: None)
+    seen = {}
+
+    def fake_playwright(url, job_id=None):
+        seen["job_id"] = job_id
+        return "Title: Data Analyst\n\nRequirements: 2+ years of experience with SQL. Responsibilities: reports. " * 3
+
+    monkeypatch.setattr(s, "_scrape_with_playwright", fake_playwright)
+    trace = []
+    result = s.scrape("https://careers.example.com/jobs/1", job_id=42, trace=trace)
+    assert result["source"] == "local_browser"
+    assert seen["job_id"] == 42
+    assert trace[-1]["method"] == "playwright" and trace[-1]["valid"] is True

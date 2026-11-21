@@ -14,6 +14,10 @@ PLACEHOLDER_VALUES = (
     "n/a",
     "none",
     "null",
+    # הדף הציבורי של HireMeTech מסתיר את החברה: "<תפקיד> at Company | HireMe"
+    "company",
+    "company | hireme",
+    "hireme",
 )
 
 

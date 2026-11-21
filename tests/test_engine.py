@@ -92,6 +92,21 @@ def test_model_is_configurable(monkeypatch):
     assert "/models/gemini-3.5-flash-lite:generateContent" in JobAnalyzer().api_url
 
 
+def test_model_chain_from_env(monkeypatch):
+    monkeypatch.setenv("GEMINI_MODELS", " gemini-2.5-flash-lite, gemini-3.5-flash-lite ,,gemini-2.5-flash-lite")
+    monkeypatch.setenv("GEMINI_MODEL", "ignored-when-chain-set")
+    assert engine.configured_models() == ["gemini-2.5-flash-lite", "gemini-3.5-flash-lite"]
+    monkeypatch.delenv("GEMINI_MODELS")
+    assert engine.configured_models() == ["ignored-when-chain-set"]
+
+
+def test_result_records_which_model_analyzed(analyzer, monkeypatch):
+    monkeypatch.setattr(
+        engine.requests, "post", lambda url, headers=None, json=None, timeout=None: _FakeResponse(200, _gemini_body(VALID), url)
+    )
+    assert analyzer.analyze("cv", "ctx", {"url": "u", "full_description": "d"})["model"] == engine.DEFAULT_MODEL
+
+
 def test_empty_model_env_falls_back_to_default(monkeypatch):
     """שורה ריקה GEMINI_MODEL= ב-.env (כמו ב-.env.example) לא אמורה לשבור את ה-URL."""
     monkeypatch.setenv("GEMINI_API_KEY", FAKE_KEY)

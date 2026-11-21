@@ -65,7 +65,9 @@ async def test_analysis_placeholder_does_not_replace_value(db):
     await finish_analysis(job["id"], {"company": "לא צוין", "job_title": "Unknown"})
 
     row = await get_job_by_url("https://jobs.example.com/3")
-    assert row["company"] == "https://jobs.example.com/3"  # ה-placeholder המקורי נשאר
+    # קודם ה-URL (placeholder זמני מההוספה) נשאר והוצג ב-UI כשם החברה; אחרי הניתוח - "לא צוין"
+    assert row["company"] == "לא צוין"
+    assert row["job_title"] == "לא צוין"
     assert row["status"] == "COMPLETED"
 
 
@@ -83,3 +85,17 @@ async def test_get_all_jobs_uses_db_columns_over_analysis_json(db):
     assert listed["company"] == "Monday"
     assert listed["url"] == url
     assert listed["suitability_score"] == 70
+
+
+@pytest.mark.db
+async def test_unknown_company_becomes_not_specified_instead_of_the_url(db):
+    """ה-AI לא מצא חברה (למשל HireMeTech בלי טוקן): לא משאירים את ה-URL כשם החברה ב-UI."""
+    from db.jobs_repository import add_new_job, finish_analysis, get_job_by_url
+
+    url = "https://hiremetech.com/job/1"
+    await add_new_job(url)
+    job = await get_job_by_url(url)
+    await finish_analysis(job["id"], {"company": "Company | HireMe", "job_title": "RPA Developer"})
+    row = await get_job_by_url(url)
+    assert row["company"] == "לא צוין"
+    assert row["job_title"] == "RPA Developer"

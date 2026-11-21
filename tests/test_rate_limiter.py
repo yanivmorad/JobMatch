@@ -128,6 +128,60 @@ async def test_wait_until_allowed_sleeps_through_a_pause():
     assert limiter.status()["paused_until"] is None
 
 
+# --- שרשרת מודלים ---
+
+from workers.rate_limiter import ModelPool  # noqa: E402
+
+
+def _pool(clock, *names):
+    members = [(SimpleNamespace(model_name=n), _limiter(clock, rpm=0, rpd=0)) for n in names]
+    for (analyzer, limiter) in members:
+        limiter.model = analyzer.model_name
+    return ModelPool(members, now=clock, sleep=clock.sleep)
+
+
+async def test_pool_uses_the_first_model_while_it_is_available():
+    clock = FakeClock(START)
+    pool = _pool(clock, "a", "b")
+    analyzer, _ = await pool.acquire()
+    assert analyzer.model_name == "a"
+
+
+async def test_pool_moves_to_the_next_model_when_the_daily_quota_is_hit_and_comes_back():
+    clock = FakeClock(START)
+    pool = _pool(clock, "a", "b")
+    pool.members[0][1].on_rate_limited(_err(per_day=True))
+
+    analyzer, _ = await pool.acquire()
+    assert analyzer.model_name == "b"
+    assert clock.sleeps == []  # לא חיכה - עבר מיד למודל הבא
+
+    clock.now = next_pacific_midnight(START)  # אחרי האיפוס - חוזרים למודל הראשון
+    analyzer, _ = await pool.acquire()
+    assert analyzer.model_name == "a"
+
+
+async def test_pool_waits_when_every_model_is_paused():
+    clock = FakeClock(START)
+    pool = _pool(clock, "a", "b")
+    pool.members[0][1].on_rate_limited(_err(retry_after=120))
+    pool.members[1][1].on_rate_limited(_err(retry_after=60))
+
+    analyzer, _ = await pool.acquire()
+    assert analyzer.model_name == "b"  # זה שמתפנה ראשון
+    assert clock.now - START == timedelta(seconds=60)
+
+
+async def test_pool_respects_a_local_daily_cap_per_model():
+    clock = FakeClock(START)
+    pool = _pool(clock, "a", "b")
+    pool.members[0][1].rpd = 1
+    first, limiter = await pool.acquire()
+    await limiter.record_request()
+    second, _ = await pool.acquire()
+    assert (first.model_name, second.model_name) == ("a", "b")
+
+
 @pytest.mark.parametrize("value, expected", [("", 10), ("abc", 10), ("30", 30)])
 def test_rpm_from_env(monkeypatch, value, expected):
     monkeypatch.setenv("GEMINI_RPM", value)

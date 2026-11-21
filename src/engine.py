@@ -194,17 +194,29 @@ def _parse_rate_limit(response) -> RateLimitError:
     return RateLimitError(message, retry_after, quota_ids, quota_values)
 
 
+def configured_models() -> List[str]:
+    """
+    GEMINI_MODELS="a,b,c" (שרשרת: עוברים לבא כשהמכסה היומית של הקודם נגמרת),
+    אחרת GEMINI_MODEL, אחרת DEFAULT_MODEL.
+    """
+    chain = [m.strip() for m in (os.getenv("GEMINI_MODELS") or "").split(",") if m.strip()]
+    if chain:
+        return list(dict.fromkeys(chain))
+    # "or" ולא ברירת מחדל של getenv: שורה ריקה ב-.env (GEMINI_MODEL=) מגיעה כ-""
+    return [(os.getenv("GEMINI_MODEL") or "").strip() or DEFAULT_MODEL]
+
+
 class JobAnalyzer:
-    def __init__(self):
+    def __init__(self, model_name: Optional[str] = None):
         """
         אתחול המנתח - הגדרת מודל ה-AI ופרטי הגישה.
+        model_name: ברירת מחדל - המודל הראשון ב-configured_models().
         """
         self.api_key = os.getenv("GEMINI_API_KEY")
         if not self.api_key:
             raise RuntimeError("❌ GEMINI_API_KEY missing in .env file")
 
-        # "or" ולא ברירת מחדל של getenv: שורה ריקה ב-.env (GEMINI_MODEL=) מגיעה כ-""
-        self.model_name = (os.getenv("GEMINI_MODEL") or "").strip() or DEFAULT_MODEL
+        self.model_name = model_name or configured_models()[0]
         # המפתח נשלח ב-header ולא ב-URL: הודעות שגיאה של requests כוללות את ה-URL,
         # ומפתח ב-query string היה דולף ללוגים.
         self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent"
@@ -271,6 +283,7 @@ class JobAnalyzer:
             try:
                 result = AnalysisResult.model_validate(json.loads(text)).model_dump()
                 result["url"] = job_data.get("url")
+                result["model"] = self.model_name  # ציונים של מודלים שונים לא בהכרח ברי-השוואה
                 return result
             except (json.JSONDecodeError, ValidationError) as e:
                 last_error = e

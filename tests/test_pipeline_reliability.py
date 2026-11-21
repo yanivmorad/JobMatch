@@ -20,7 +20,7 @@ from db.jobs_repository import (
 from db.postgres import get_pool
 from engine import RateLimitError, TransientAIError
 from workers import worker_manager
-from workers.rate_limiter import AIRateLimiter
+from workers.rate_limiter import AIRateLimiter, ModelPool
 
 pytestmark = pytest.mark.db
 
@@ -123,6 +123,10 @@ def _limiter():
     return AIRateLimiter("gemini-test", rpm=0, rpd=0)
 
 
+def _pool(analyzer, limiter=None):
+    return ModelPool([(analyzer, limiter or _limiter())])
+
+
 async def _ai_job(url="https://jobs.example/ai"):
     await add_new_job(url, manual_text="Requirements: SQL. Experience: 2 years.")
     return url
@@ -133,7 +137,7 @@ async def test_429_puts_the_job_back_without_failing_it(db):
     limiter = _limiter()
     err = RateLimitError("429", retry_after=30, quota_ids=["GenerateRequestsPerMinutePerProjectPerModel-FreeTier"])
 
-    assert await worker_manager.analyze_next(_Analyzer(err), limiter) is True
+    assert await worker_manager.analyze_next(_pool(_Analyzer(err), limiter)) is True
 
     row = await get_job_by_url(url)
     assert row["status"] == "WAITING_FOR_AI"  # לא FAILED_ANALYSIS
@@ -143,13 +147,13 @@ async def test_429_puts_the_job_back_without_failing_it(db):
 
 async def test_transient_ai_error_is_retried_then_success_clears_the_note(db):
     url = await _ai_job()
-    await worker_manager.analyze_next(_Analyzer(TransientAIError("Gemini HTTP 503")), _limiter())
+    await worker_manager.analyze_next(_pool(_Analyzer(TransientAIError("Gemini HTTP 503"))))
     row = await get_job_by_url(url)
     assert row["status"] == "WAITING_FOR_AI" and row["retry_count"] == 1
     assert "מנסה שוב" in row["error_log"]
 
     await _set(url, not_before=None)  # בלי לחכות ל-backoff
-    await worker_manager.analyze_next(_Analyzer(VALID), _limiter())
+    await worker_manager.analyze_next(_pool(_Analyzer(VALID)))
     row = await get_job_by_url(url)
     assert row["status"] == "COMPLETED" and row["error_log"] is None
 
@@ -157,7 +161,7 @@ async def test_transient_ai_error_is_retried_then_success_clears_the_note(db):
 async def test_other_notes_survive_a_successful_analysis(db):
     url = await _ai_job()
     await _set(url, error_log="HireMeTech: הטוקן פג (נותח לפי הדף הציבורי, בלי שם החברה)")
-    await worker_manager.analyze_next(_Analyzer(VALID), _limiter())
+    await worker_manager.analyze_next(_pool(_Analyzer(VALID)))
     assert "הטוקן פג" in (await get_job_by_url(url))["error_log"]
 
 
@@ -166,7 +170,7 @@ async def test_ai_requests_are_counted_per_pacific_day(db):
     from db.jobs_repository import get_api_usage, increment_api_usage
 
     limiter = AIRateLimiter("gemini-test", rpm=0, rpd=0, get_usage=get_api_usage, add_usage=increment_api_usage)
-    await worker_manager.analyze_next(_Analyzer(VALID), limiter)
+    await worker_manager.analyze_next(_pool(_Analyzer(VALID), limiter))
     assert limiter.status()["requests_today"] == 1
     assert await get_api_usage(limiter._day, "gemini-test") == 1
 

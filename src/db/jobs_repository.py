@@ -182,8 +182,10 @@ async def finish_analysis(job_id: int, result: dict):
         UPDATE jobs SET
             status = 'COMPLETED', analysis_result = $2, analyzed_at = NOW(),
             error_log = {_CLEAR_RETRY_NOTE_SQL},
-            company = CASE WHEN $3::text IS NOT NULL AND {company_cond} THEN $3 ELSE company END,
-            job_title = CASE WHEN $4::text IS NOT NULL AND {title_cond} THEN $4 ELSE job_title END
+            company = CASE WHEN $3::text IS NOT NULL AND {company_cond} THEN $3
+                           WHEN {company_cond} THEN 'לא צוין' ELSE company END,
+            job_title = CASE WHEN $4::text IS NOT NULL AND {title_cond} THEN $4
+                             WHEN {title_cond} THEN 'לא צוין' ELSE job_title END
         WHERE id = $1
         """,
         job_id,
