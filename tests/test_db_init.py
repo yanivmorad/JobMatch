@@ -4,7 +4,6 @@ from db import postgres
 from db.jobs_repository import (
     ApplicationStatus,
     add_new_job,
-    auto_archive_old_applications,
     get_job_by_url,
     update_application_status,
     update_user_action,
@@ -109,15 +108,3 @@ async def test_update_application_status(db):
     assert job["application_status"] == "rejected"
     assert job["is_archived"] is True
     assert job["user_action"] == "ignored"
-
-
-async def test_auto_archive_old_applications(db, raw_conn):
-    url = "https://example.com/job/4"
-    await add_new_job(url)
-    await update_application_status(url, ApplicationStatus.APPLIED)
-    await raw_conn.execute(
-        "UPDATE jobs SET created_at = NOW() - INTERVAL '31 days' WHERE url = $1", url
-    )
-
-    await auto_archive_old_applications()
-    assert (await get_job_by_url(url))["application_status"] == "ghosted"

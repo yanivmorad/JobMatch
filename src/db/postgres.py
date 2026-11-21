@@ -82,6 +82,38 @@ async def close_pool():
     _pool_lock = None
 
 
+# סטטוסים שמשמעותם "הגשתי" (גם אם התקדם לראיון / נדחה / לא חזרו)
+APPLIED_STATUSES = ("applied", "phone_screen", "interview", "rejected", "ghosted")
+
+
+async def _migrate_applied_at(conn):
+    """
+    applied_at = מתי הוגשה המועמדות (הארכוב האוטומטי סופר ממנו 30 יום, ולא מ-created_at).
+    ב-DB ישן העמודה נוספת וממולאת פעם אחת מ-updated_at: זה קירוב (זמן העדכון האחרון של
+    השורה, כלומר לא לפני ההגשה), כך שמשרה לא תסומן ghosted מוקדם מדי.
+    """
+    exists = await conn.fetchval(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'jobs' AND column_name = 'applied_at'
+        )
+        """
+    )
+    if exists:
+        return
+    await conn.execute(
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS applied_at TIMESTAMP WITH TIME ZONE"
+    )
+    await conn.execute(
+        """
+        UPDATE jobs SET applied_at = COALESCE(updated_at, created_at)
+        WHERE applied_at IS NULL AND application_status = ANY($1::text[])
+        """,
+        list(APPLIED_STATUSES),
+    )
+
+
 async def init_db(conn):
     """
     יוצר / מעדכן את הסכמה. כל הפעולות idempotent, כך שבטוח להריץ שוב ושוב:
@@ -116,6 +148,7 @@ async def init_db(conn):
             analysis_result JSONB,
             user_action TEXT DEFAULT 'none',
             application_status TEXT DEFAULT 'pending',
+            applied_at TIMESTAMP WITH TIME ZONE,
             is_archived BOOLEAN DEFAULT FALSE,
             error_log TEXT,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -133,6 +166,7 @@ async def init_db(conn):
     await conn.execute(
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS application_status TEXT DEFAULT 'pending'"
     )
+    await _migrate_applied_at(conn)
 
     # 4. טריגר updated_at
     await conn.execute(

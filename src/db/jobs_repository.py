@@ -32,6 +32,23 @@ class ApplicationStatus(str, Enum):
     GHOSTED = "ghosted"  # ארכיון אוטומטי (ללא מענה מעל 30 יום)
 
 
+# applied_at: מתי הוגשה המועמדות. מתמלא במעבר לאחד משלבי ההגשה (ונשמר אם כבר קיים -
+# מעבר מ-applied לראיון לא מאפס אותו), ומתאפס בחזרה ל-pending.
+_APPLIED_STAGES = (
+    ApplicationStatus.APPLIED.value,
+    ApplicationStatus.PHONE_SCREEN.value,
+    ApplicationStatus.INTERVIEW.value,
+)
+
+
+def _applied_at_sql(status_param: str, stages_param: str = "$5") -> str:
+    """ביטוי SQL ל-applied_at. status_param = הפרמטר עם הסטטוס החדש, stages_param = _APPLIED_STAGES."""
+    return (
+        f"CASE WHEN {status_param} = ANY({stages_param}::text[]) THEN COALESCE(applied_at, NOW()) "
+        f"WHEN {status_param} = 'pending' THEN NULL ELSE applied_at END"
+    )
+
+
 # --- פונקציות יצירה וניהול תור (Pipeline) ---
 
 
@@ -249,15 +266,17 @@ async def update_user_action(url: str, action: str):
         app_status = "not_relevant"
 
     await pool.execute(
-        """
-        UPDATE jobs 
-        SET user_action = $1, is_archived = $2, application_status = $3
+        f"""
+        UPDATE jobs
+        SET user_action = $1, is_archived = $2, application_status = $3,
+            applied_at = {_applied_at_sql("$3")}
         WHERE url = $4
         """,
         action,
         is_archived,
         app_status,
         url,
+        list(_APPLIED_STAGES),
     )
 
 
@@ -280,15 +299,17 @@ async def update_application_status(
         user_action = "ignored"
 
     await pool.execute(
-        """
-        UPDATE jobs 
-        SET application_status = $1, user_action = $2, is_archived = $3
+        f"""
+        UPDATE jobs
+        SET application_status = $1, user_action = $2, is_archived = $3,
+            applied_at = {_applied_at_sql("$1")}
         WHERE url = $4
         """,
         status.value,
         user_action,
         is_archived,
         url,
+        list(_APPLIED_STAGES),
     )
 
 
@@ -353,12 +374,23 @@ async def reset_stuck_jobs():
     )
 
 
-async def auto_archive_old_applications():
-    """יכולת: ניקוי אוטומטי של תהליכים ישנים שבהם המעסיק לא הגיב מעל 30 יום."""
+async def auto_archive_old_applications(days: int = 30) -> int:
+    """
+    הגשות שלא קיבלו מענה מעל `days` יום -> ghosted + ארכיון (כמו בעדכון ידני ל-ghosted).
+    נספר מ-applied_at (מתי הוגשה המועמדות). קודם נספר מ-created_at, כך שמשרה שנוספה
+    לפני חודש והוגשה אתמול סומנה מיד "ללא מענה".
+    מחזיר את מספר המשרות שעודכנו.
+    """
     pool = await get_pool()
-    await pool.execute(
-        "UPDATE jobs SET application_status = 'ghosted' WHERE application_status = 'applied' AND created_at < NOW() - INTERVAL '30 days'"
+    result = await pool.execute(
+        """
+        UPDATE jobs SET application_status = 'ghosted', is_archived = TRUE
+        WHERE application_status = 'applied'
+          AND applied_at < NOW() - make_interval(days => $1)
+        """,
+        days,
     )
+    return int(result.split()[-1])
 
 
 async def clear_archived_jobs():

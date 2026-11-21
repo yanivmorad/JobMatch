@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from db.jobs_repository import (
+    auto_archive_old_applications,
     fetch_next_job,
     finish_analysis,
     finish_scrape,
@@ -177,6 +178,32 @@ async def ai_worker():
             await asyncio.sleep(5)
 
 
+MAINTENANCE_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+async def maintenance_worker(interval_seconds: float = MAINTENANCE_INTERVAL_SECONDS):
+    """
+    תחזוקה יומית: הגשות בלי מענה מעל 30 יום -> ghosted (לפי applied_at).
+    רץ מיד בהפעלה ואז פעם ב-interval. בשירות שנרדם (Render חינמי) הריצה בהפעלה
+    היא זו שמבטיחה שזה קורה גם כשהשרת לא היה ער 24 שעות ברצף.
+    """
+    logger.info("🧹 Maintenance Worker started")
+    while True:
+        try:
+            count = await auto_archive_old_applications()
+            if count:
+                logger.info(f"👻 Maintenance: {count} applications marked as ghosted")
+        except Exception as e:
+            # שגיאה (למשל DB לא זמין רגעית) לא עוצרת את הלולאה - ננסה שוב בסבב הבא
+            logger.error(f"❌ Maintenance error: {e}")
+        await asyncio.sleep(interval_seconds)
+
+
+# הפניות למשימות הרקע: asyncio שומר רק weak reference למשימה, ומשימה בלי הפניה
+# חזקה עלולה להיאסף ע"י ה-GC באמצע ריצה (ראו התיעוד של asyncio.create_task)
+_background_tasks: set = set()
+
+
 async def start_background_workers():
     """
     פונקציית הניהול הראשית:
@@ -187,8 +214,9 @@ async def start_background_workers():
     await reset_stuck_jobs()
 
     # הפעלה במקביל של כל יחידות העבודה
-    asyncio.create_task(resolver_worker())
-    asyncio.create_task(scrape_worker())
-    asyncio.create_task(ai_worker())
+    for worker in (resolver_worker, scrape_worker, ai_worker, maintenance_worker):
+        task = asyncio.create_task(worker(), name=worker.__name__)
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
-    logger.info("🚀 כל ה-Workers באוויר (Resolver, Scraper, AI)")
+    logger.info("🚀 כל ה-Workers באוויר (Resolver, Scraper, AI, Maintenance)")
