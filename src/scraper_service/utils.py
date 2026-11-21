@@ -105,6 +105,26 @@ _JOB_SIGNALS = (
     "משרה מלאה",
     "כישורים",
     "התפקיד כולל",
+    # ניסוחים נפוצים נוספים (למשל Greenhouse של ScaleOps: "Who you are" / "What you bring")
+    "who you are",
+    "what you bring",
+    "what you'll bring",
+    "about you",
+    "nice to have",
+    "must have",
+    "bonus points",
+    "degree in",
+    "knowledge of",
+    "familiarity with",
+    "track record",
+    "what we offer",
+    "hands-on",
+    "proficien",
+    "תואר",
+    "היכרות עם",
+    "תחומי אחריות",
+    "דרישות התפקיד",
+    "המשרה כוללת",
 )
 
 # שורות הכותרת ש-Jina מוסיף לפני התוכן
@@ -207,8 +227,9 @@ def validate_content(text: str, url: Optional[str] = None) -> Tuple[bool, str]:
             return False, "login_wall"
         if _find(lowered, _COOKIES):
             return False, "cookie_wall"
-        if signals == 0:
-            return False, "no_job_content"
+        # קודם עבר גם עם סימן אחד: LinkedIn החזיר רק "עבודות דומות" (בלי תיאור המשרה),
+        # כלומר דף רשימה - וזה נשלח ל-AI כאילו היה המשרה
+        return False, "no_job_content"
 
     return True, "ok"
 

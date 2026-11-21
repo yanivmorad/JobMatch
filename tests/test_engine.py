@@ -35,11 +35,23 @@ def _gemini_body(result: dict) -> dict:
     }
 
 
+VALID = {
+    "company": "Acme",
+    "job_title": "Data Analyst",
+    "suitability_score": 72,
+    "acceptance_probability": 55,
+    "job_summary_hebrew": "סיכום",
+    "showstoppers": [],
+    "gap_analysis": ["Tableau"],
+    "recommendation": "להגיש",
+    "formatted_message": "הודעה",
+}
+
+
 @pytest.fixture
 def analyzer(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", FAKE_KEY)
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
-    monkeypatch.setattr(engine.time, "sleep", lambda *_: None)
     return JobAnalyzer()
 
 
@@ -49,7 +61,7 @@ def test_api_key_is_sent_in_header_not_in_url(analyzer, monkeypatch):
 
     def fake_post(url, headers=None, json=None, timeout=None):
         calls.append((url, headers))
-        return _FakeResponse(200, _gemini_body({"suitability_score": 50}), url)
+        return _FakeResponse(200, _gemini_body(VALID), url)
 
     monkeypatch.setattr(engine.requests, "post", fake_post)
     analyzer.analyze("cv", "ctx", {"url": "u", "full_description": "d"})
@@ -111,3 +123,135 @@ def test_prompt_passes_manual_company_as_hint():
     )
     assert "חברה: Wix" in prompt
     assert "תפקיד: Backend" in prompt
+
+
+# --- שלב 4/5: סכמה, retry ושגיאות מסווגות ---
+
+from engine import AIError, InvalidAIResponse, RateLimitError, TransientAIError
+
+
+class _Resp(_FakeResponse):
+    def __init__(self, status_code, body, headers=None):
+        super().__init__(status_code, body, "https://generativelanguage.googleapis.com/x")
+        self.headers = headers or {}
+
+
+def _sequence(monkeypatch, *responses):
+    """fake requests.post שמחזיר את התשובות לפי הסדר (Exception = נזרק)."""
+    calls = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        calls.append(json)
+        r = responses[len(calls) - 1]
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    monkeypatch.setattr(engine.requests, "post", fake_post)
+    return calls
+
+
+_JOB = {"url": "https://jobs.example/1", "full_description": "Data Analyst. Requirements: SQL. Experience: 2 years."}
+
+
+def test_valid_answer_is_returned_with_all_fields(analyzer, monkeypatch):
+    _sequence(monkeypatch, _Resp(200, _gemini_body(VALID)))
+    result = analyzer.analyze("cv", "ctx", _JOB)
+    assert result["url"] == _JOB["url"]
+    assert {k: result[k] for k in VALID} == VALID
+
+
+def test_request_uses_structured_output_schema(analyzer, monkeypatch):
+    calls = _sequence(monkeypatch, _Resp(200, _gemini_body(VALID)))
+    analyzer.analyze("cv", "ctx", _JOB)
+    config = calls[0]["generationConfig"]
+    assert config["responseMimeType"] == "application/json"
+    assert set(config["responseSchema"]["required"]) >= {"company", "job_title", "suitability_score", "recommendation"}
+
+
+def test_missing_field_is_retried_then_succeeds(analyzer, monkeypatch):
+    partial = {k: v for k, v in VALID.items() if k != "job_title"}
+    calls = _sequence(monkeypatch, _Resp(200, _gemini_body(partial)), _Resp(200, _gemini_body(VALID)))
+    assert analyzer.analyze("cv", "ctx", _JOB)["job_title"] == "Data Analyst"
+    assert len(calls) == 2
+
+
+def test_broken_json_twice_raises_invalid_response(analyzer, monkeypatch):
+    broken = {"candidates": [{"content": {"parts": [{"text": "{not json"}]}}]}
+    _sequence(monkeypatch, _Resp(200, broken), _Resp(200, broken))
+    with pytest.raises(InvalidAIResponse):
+        analyzer.analyze("cv", "ctx", _JOB)
+
+
+def test_score_out_of_range_is_rejected(analyzer, monkeypatch):
+    bad = {**VALID, "suitability_score": 140}
+    _sequence(monkeypatch, _Resp(200, _gemini_body(bad)), _Resp(200, _gemini_body(bad)))
+    with pytest.raises(InvalidAIResponse):
+        analyzer.analyze("cv", "ctx", _JOB)
+
+
+def test_recommendation_variants_are_normalized(analyzer, monkeypatch):
+    _sequence(monkeypatch, _Resp(200, _gemini_body({**VALID, "recommendation": "לא כדאי להגיש."})))
+    assert analyzer.analyze("cv", "ctx", _JOB)["recommendation"] == "לא להגיש"
+
+
+def test_429_per_day_quota_is_parsed(analyzer, monkeypatch):
+    body = {
+        "error": {
+            "code": 429,
+            "status": "RESOURCE_EXHAUSTED",
+            "details": [
+                {
+                    "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                    "violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier", "quotaValue": "20"}],
+                },
+                {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "39s"},
+            ],
+        }
+    }
+    calls = _sequence(monkeypatch, _Resp(429, body))
+    with pytest.raises(RateLimitError) as err:
+        analyzer.analyze("cv", "ctx", _JOB)
+    assert err.value.retry_after == 39
+    assert err.value.per_day is True
+    assert err.value.quota_values == ["20"]
+    assert len(calls) == 1  # 429 לא נשלח שוב בתוך המנוע - ה-worker מחכה ומחזיר לתור
+
+
+def test_429_per_minute_uses_retry_after_header(analyzer, monkeypatch):
+    body = {"error": {"details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                                   "violations": [{"quotaId": "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"}]}]}}
+    _sequence(monkeypatch, _Resp(429, body, headers={"Retry-After": "7"}))
+    with pytest.raises(RateLimitError) as err:
+        analyzer.analyze("cv", "ctx", _JOB)
+    assert err.value.retry_after == 7 and err.value.per_day is False
+
+
+@pytest.mark.parametrize(
+    "response, error",
+    [
+        (_Resp(503, {}), TransientAIError),
+        (requests.ConnectionError("down"), TransientAIError),
+        (requests.Timeout("slow"), TransientAIError),
+        (_Resp(400, {"error": {"message": "API key not valid"}}), AIError),
+    ],
+)
+def test_errors_are_classified(analyzer, monkeypatch, response, error):
+    _sequence(monkeypatch, response)
+    with pytest.raises(error) as err:
+        analyzer.analyze("cv", "ctx", _JOB)
+    if error is AIError:
+        assert not isinstance(err.value, TransientAIError)
+    assert FAKE_KEY not in str(err.value)
+
+
+def test_long_description_is_condensed_before_sending(analyzer, monkeypatch):
+    monkeypatch.setenv("MAX_DESCRIPTION_CHARS", "3000")
+    nav = "\n".join(f"[Menu item {i}](https://site/{i})" for i in range(400))
+    body = "## Requirements\n" + "\n".join(f"- 3 years of experience with tool {i}" for i in range(40))
+    calls = _sequence(monkeypatch, _Resp(200, _gemini_body(VALID)))
+    analyzer.analyze("cv", "ctx", {"url": "u", "full_description": nav + "\n\n" + body})
+    prompt = calls[0]["contents"][0]["parts"][0]["text"]
+    assert "experience with tool 39" in prompt
+    assert "https://site/" not in prompt
+    assert len(prompt) < 3000 + 2000  # תיאור מקוצר + תבנית הפרומפט

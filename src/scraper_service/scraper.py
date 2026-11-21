@@ -2,6 +2,7 @@ import logging
 import os
 import time
 from typing import List, Optional
+from urllib.parse import urlparse
 
 import requests
 from dotenv import load_dotenv
@@ -20,6 +21,12 @@ except ImportError:
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+# selector ייעודי לאתרים שבהם ה-selector הכללי תופס את החלק הלא נכון.
+# LinkedIn: "main" הכיל רק "עבודות דומות", וגם הדף המלא דרך Jina היה בלי תיאור המשרה.
+SITE_SELECTORS = {
+    "linkedin.com": ".top-card-layout, .description__text, .show-more-less-html__markup",
+}
 
 
 class Scraper:
@@ -137,8 +144,15 @@ class Scraper:
             entry["seconds"] = round(time.time() - t0, 1)
             trace.append(entry)
 
+    def _headers_for(self, url: str) -> dict:
+        host = (urlparse(url).hostname or "").lower()
+        for domain, selector in SITE_SELECTORS.items():
+            if host == domain or host.endswith("." + domain):
+                return {**self.headers, "X-Target-Selector": selector}
+        return self.headers
+
     def _try_jina(self, url: str, id_tag: str, trace: List[dict]) -> Optional[dict]:
-        result = self._jina_request(url, id_tag, trace, self.headers)
+        result = self._jina_request(url, id_tag, trace, self._headers_for(url))
         if result is None and trace and trace[-1].get("reason") == "jina_selector_miss":
             # Jina מחזיר 422 כשאף אחד מה-selectors לא קיים בדף (למשל Lever) -
             # מנסים שוב את כל הדף לפני שעוברים ל-Playwright

@@ -125,6 +125,8 @@ def _bamboohr(url: str, session) -> Optional[SiteApiResult]:
     text = _document(
         title,
         {
+            # ה-API לא מחזיר את שם החברה; תת-הדומיין (rapaport.bamboohr.com) הוא רמז ל-AI
+            "Careers site": host.split(".")[0],
             "Location": location,
             "Employment": job.get("employmentStatusLabel"),
             "Department": job.get("departmentLabel"),

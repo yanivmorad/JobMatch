@@ -158,13 +158,14 @@ def summarize(rows: list) -> list:
     by_site = OrderedDict()
     for r in rows:
         s = by_site.setdefault(
-            r["site"], {"site": r["site"], "links": 0, "ok": 0, "jina": 0, "playwright": 0, "failed": 0, "seconds": [], "errors": []}
+            r["site"], {"site": r["site"], "links": 0, "ok": 0, "api": 0, "jina": 0, "playwright": 0, "failed": 0, "seconds": [], "errors": []}
         )
         s["links"] += 1
         s["seconds"].append(r["seconds"])
         if r["ok"]:
             s["ok"] += 1
-            s["playwright" if r["method"] == "playwright" else "jina"] += 1
+            method = r["method"] or ""
+            s["playwright" if method == "playwright" else "api" if method.endswith("_api") else "jina"] += 1
         else:
             s["failed"] += 1
             s["errors"].append(r["error"])
@@ -175,6 +176,7 @@ def summarize(rows: list) -> list:
                 "site": s["site"],
                 "links": s["links"],
                 "ok": s["ok"],
+                "api": s["api"],
                 "jina": s["jina"],
                 "playwright": s["playwright"],
                 "failed": s["failed"],
@@ -221,7 +223,7 @@ def main():
 
     summary = summarize(rows)
     ok = sum(r["ok"] for r in rows)
-    summary_cols = ["site", "links", "ok", "jina", "playwright", "failed", "success_rate", "avg_seconds"]
+    summary_cols = ["site", "links", "ok", "api", "jina", "playwright", "failed", "success_rate", "avg_seconds"]
     print(f"=== Summary: {ok}/{len(rows)} succeeded ===\n")
     print(table(summary, summary_cols))
     failures = [s for s in summary if s["errors"]]
