@@ -110,14 +110,20 @@ async def fetch_next_job(current_status: str, next_status: str) -> Optional[dict
             return dict(row) if row else None
 
 
-async def update_job_after_resolution(job_id: int, new_url: str, status: str):
-    """מעדכן את הלינק הסופי (למשל אחרי מעבר דרך לינקים מקוצרים) ומעביר לשלב הסריקה."""
+async def update_job_after_resolution(
+    job_id: int, new_url: str, status: str, note: Optional[str] = None
+):
+    """
+    מעדכן את הלינק הסופי (למשל אחרי מעבר דרך לינקים מקוצרים) ומעביר לשלב הסריקה.
+    note: הערה למשתמש (נשמרת ב-error_log), למשל "הטוקן פג - נותח לפי הדף הציבורי".
+    """
     pool = await get_pool()
     await pool.execute(
-        "UPDATE jobs SET url = $1, status = $2, error_log = NULL, updated_at = NOW() WHERE id = $3",
+        "UPDATE jobs SET url = $1, status = $2, error_log = $4, updated_at = NOW() WHERE id = $3",
         new_url,
         status,
         job_id,
+        note,
     )
 
 

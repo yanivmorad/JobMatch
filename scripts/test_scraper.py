@@ -89,7 +89,11 @@ def run_one(url: str, resolver: URLResolver, scraper: Scraper, skip_resolve: boo
         try:
             target = resolver.resolve(url)
         except ResolveError as e:
-            row["error"] = f"resolve: {e}"
+            if e.public_fallback:
+                # כמו ה-worker: HireMeTech -> סריקת הדף הציבורי (בלי שם החברה)
+                row["resolve_note"] = f"{e} -> public page"
+            else:
+                row["error"] = f"resolve: {e}"
         except Exception as e:  # כמו ה-worker: כל שגיאה = FAILED_RESOLVE
             row["error"] = f"resolve: {type(e).__name__}: {e}"
         row["resolve_seconds"] = round(time.time() - t0, 1)
@@ -140,6 +144,8 @@ def print_row(i: int, total: int, row: dict):
     print(f"    url:      {row['url']}")
     if row["resolved_url"]:
         print(f"    resolved: {row['resolved_url']} ({row['resolved_site']}, {row['resolve_seconds']}s)")
+    if row.get("resolve_note"):
+        print(f"    resolve:  {row['resolve_note']}")
     print(f"    attempts: {fmt_attempts(row['attempts'])}")
     if row["ok"]:
         print(f"    preview:  {row['preview']}")
@@ -237,6 +243,8 @@ def main():
             f.write(f"- **{r['site']}** {'OK' if r['ok'] else 'FAIL'} ({r['method'] or '-'}, {r['length']} chars, {r['seconds']}s): {r['url']}\n")
             if r["resolved_url"]:
                 f.write(f"  - resolved: {r['resolved_url']}\n")
+            if r.get("resolve_note"):
+                f.write(f"  - resolve: {r['resolve_note']}\n")
             f.write(f"  - attempts: {fmt_attempts(r['attempts'])}\n")
             f.write(f"  - {'preview: ' + r['preview'] if r['ok'] else 'error: ' + str(r['error'])}\n")
     print(f"\nReport: {base}.md\n        {base}.json")

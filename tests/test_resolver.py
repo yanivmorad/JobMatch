@@ -52,7 +52,10 @@ def test_screenshot_failure_does_not_raise(monkeypatch, tmp_path):
 
 # --- ResolveError: כישלון מפורש במקום החזרה שקטה של הקישור המקורי ---
 
+import base64
+import json
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -124,6 +127,66 @@ def test_resolve_error_from_click_through_is_kept(monkeypatch):
     with pytest.raises(ResolveError, match="כפתור הגשה"):
         URLResolver(hireme_token="t").resolve("https://hiremetech.com/jobs/123")
     assert browser.closed
+
+
+def _jwt(exp: datetime) -> str:
+    def b64(d):
+        return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+
+    return f"{b64({'alg': 'HS256'})}.{b64({'exp': int(exp.timestamp()), 'user_id': 1})}.sig"
+
+
+def test_token_expiry_reads_exp_without_verifying():
+    exp = datetime(2026, 2, 22, 10, 40, 30, tzinfo=timezone.utc)
+    assert resolvers.token_expiry(_jwt(exp)) == exp
+    assert resolvers.token_expiry("not-a-jwt") is None
+    assert resolvers.token_expiry("a.b.c") is None
+
+
+def test_token_status_never_exposes_the_token():
+    past = _jwt(datetime.now(timezone.utc) - timedelta(days=1))
+    status = resolvers.hiremetech_token_status(past)
+    assert status["configured"] is True and status["expired"] is True
+    assert past not in json.dumps(status)
+    assert resolvers.hiremetech_token_status("")["configured"] is False
+
+
+def test_expired_token_fails_fast_with_public_fallback(monkeypatch):
+    """באג: עם טוקן שפג נפתח דפדפן לכל משרה (~23 שניות), וההודעה הייתה 'הלחיצה לא הובילה לאתר'."""
+    monkeypatch.setattr(resolvers, "HAS_PLAYWRIGHT", True)
+
+    def must_not_launch():
+        raise AssertionError("browser launched with an expired token")
+
+    monkeypatch.setattr(resolvers, "sync_playwright", must_not_launch, raising=False)
+    token = _jwt(datetime(2026, 2, 22, tzinfo=timezone.utc))
+
+    with pytest.raises(ResolveError, match="פג ב-22/02/2026") as err:
+        URLResolver(hireme_token=token).resolve("https://hiremetech.com/job/1")
+    assert err.value.public_fallback is True
+
+
+def test_every_hiremetech_failure_allows_the_public_page(monkeypatch):
+    browser = _FakeBrowser()
+    monkeypatch.setattr(resolvers, "HAS_PLAYWRIGHT", True)
+    monkeypatch.setattr(resolvers, "sync_playwright", _fake_playwright(browser), raising=False)
+
+    def no_redirect(self, *a):
+        raise ResolveError("HireMeTech: הלחיצה לא הובילה לאתר החברה")
+
+    monkeypatch.setattr(URLResolver, "_click_through_hiremetech", no_redirect)
+    with pytest.raises(ResolveError) as err:
+        URLResolver(hireme_token="t").resolve("https://hiremetech.com/job/1")
+    assert err.value.public_fallback is True
+
+    monkeypatch.delenv("HIRE_ME_TECH_TOKEN", raising=False)
+    with pytest.raises(ResolveError) as err:
+        URLResolver().resolve("https://hiremetech.com/job/1")
+    assert err.value.public_fallback is True
+
+
+def test_resolve_error_default_has_no_fallback():
+    assert ResolveError("x").public_fallback is False
 
 
 def test_successful_resolution_returns_company_url(monkeypatch):

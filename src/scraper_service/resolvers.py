@@ -1,6 +1,9 @@
 # src/scraper_service/resolvers.py
+import base64
+import json
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -33,7 +36,38 @@ _USER_AGENT = (
 
 
 class ResolveError(Exception):
-    """פענוח הקישור נכשל. ההודעה מוצגת למשתמש ב-UI (error_log)."""
+    """
+    פענוח הקישור נכשל. ההודעה מוצגת למשתמש ב-UI (error_log).
+    public_fallback=True: לדף המקורי יש תיאור משרה ציבורי (HireMeTech מציג את כל התיאור
+    גם בלי התחברות, רק בלי שם החברה), ולכן אפשר לסרוק אותו במקום לעצור.
+    """
+
+    def __init__(self, message: str, public_fallback: bool = False):
+        super().__init__(message)
+        self.public_fallback = public_fallback
+
+
+def token_expiry(token: str) -> Optional[datetime]:
+    """מועד התפוגה (exp) של JWT, בלי לאמת חתימה. None אם זה לא JWT או שאין exp."""
+    try:
+        payload = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        return datetime.fromtimestamp(int(claims["exp"]), tz=timezone.utc)
+    except Exception:
+        return None
+
+
+def hiremetech_token_status(token: Optional[str] = None) -> dict:
+    """מצב הטוקן (ל-/health ולוגים): configured / expires_at / expired. לא חושף את הטוקן עצמו."""
+    token = token if token is not None else (os.getenv("HIRE_ME_TECH_TOKEN") or "").strip()
+    if not token:
+        return {"configured": False, "expires_at": None, "expired": None}
+    exp = token_expiry(token)
+    return {
+        "configured": True,
+        "expires_at": exp.isoformat() if exp else None,
+        "expired": (exp <= datetime.now(timezone.utc)) if exp else None,
+    }
 
 
 def _debug_screenshot(page, name: str) -> None:
@@ -52,7 +86,7 @@ def _debug_screenshot(page, name: str) -> None:
         logger.warning(f"Could not save debug screenshot {name}: {e}")
 
 
-def _is_hiremetech(url: str) -> bool:
+def is_hiremetech(url: str) -> bool:
     host = (urlparse(url).hostname or "").lower()
     return host == "hiremetech.com" or host.endswith(".hiremetech.com")
 
@@ -77,7 +111,7 @@ class URLResolver:
         HireMeTech page itself would only return its login wall.
         """
         id_tag = f"[ID {job_id}] " if job_id else ""
-        if _is_hiremetech(url):
+        if is_hiremetech(url):
             logger.info(
                 f"{id_tag}Resolver: HireMeTech detected for {url}, starting VIP resolution"
             )
@@ -91,11 +125,26 @@ class URLResolver:
         Matches the logic of the successful standalone script.
         """
         id_tag = f"[ID {job_id}] " if job_id else ""
+        # כל כישלון כאן מאפשר fallback: הדף הציבורי של HireMeTech מכיל את תיאור המשרה
         if not HAS_PLAYWRIGHT:
-            raise ResolveError("HireMeTech: Playwright לא מותקן בשרת, אי אפשר לפענח את הקישור")
+            raise ResolveError(
+                "HireMeTech: Playwright לא מותקן בשרת, אי אפשר לפענח את הקישור",
+                public_fallback=True,
+            )
 
         if not self.hireme_token:
-            raise ResolveError("HireMeTech: חסר HIRE_ME_TECH_TOKEN בהגדרות השרת")
+            raise ResolveError(
+                "HireMeTech: חסר HIRE_ME_TECH_TOKEN בהגדרות השרת", public_fallback=True
+            )
+
+        # הטוקן תקף שבוע. בלי הבדיקה הזו פתחנו דפדפן (~20 שניות) רק כדי לגלות שאנחנו לא מחוברים
+        expires = token_expiry(self.hireme_token)
+        if expires and expires <= datetime.now(timezone.utc):
+            raise ResolveError(
+                f"HireMeTech: הטוקן (HIRE_ME_TECH_TOKEN) פג ב-{expires:%d/%m/%Y} - "
+                "יש להתחבר לאתר ולעדכן אותו",
+                public_fallback=True,
+            )
 
         logger.info(f"{id_tag}Resolver: Starting Playwright for HireMeTech: {url}")
 
@@ -107,13 +156,16 @@ class URLResolver:
                 finally:
                     # נסגר תמיד, גם בשגיאה / timeout
                     browser.close()
-        except ResolveError:
+        except ResolveError as e:
+            e.public_fallback = True
             raise
         except Exception as e:
             logger.error(
                 f"{id_tag}Resolver: FATAL error in _resolve_hiremetech for {url}: {e}"
             )
-            raise ResolveError(f"HireMeTech: שגיאה בפענוח הקישור ({type(e).__name__})") from e
+            raise ResolveError(
+                f"HireMeTech: שגיאה בפענוח הקישור ({type(e).__name__})", public_fallback=True
+            ) from e
 
     def _click_through_hiremetech(self, browser, url, job_id, id_tag) -> str:
         context = browser.new_context(
@@ -135,6 +187,13 @@ class URLResolver:
         logger.debug(f"{id_tag}Resolver: Injecting token and reloading for {url}")
         page.reload(wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(4000)
+
+        # טוקן שהאתר דחה (פג / בוטל) נמחק מ-localStorage אחרי הטעינה, והדף מוצג כאורח:
+        # הכפתור "הגש מועמדות" עדיין קיים אבל לא מוביל לאתר החברה
+        if not page.evaluate("() => !!window.localStorage.getItem('auth_token')"):
+            raise ResolveError(
+                "HireMeTech: האתר דחה את הטוקן (HIRE_ME_TECH_TOKEN) - יש להתחבר לאתר ולעדכן אותו"
+            )
 
         # 4. Smart Button Detection
         apply_button = None
@@ -182,7 +241,7 @@ class URLResolver:
             page.wait_for_timeout(4000)
             final_url = page.url
 
-        if not final_url.startswith("http") or _is_hiremetech(final_url):
+        if not final_url.startswith("http") or is_hiremetech(final_url):
             logger.warning(f"{id_tag}Resolver: No redirect detected for {url} after click.")
             raise ResolveError(
                 "HireMeTech: הלחיצה על 'הגש מועמדות' לא הובילה לאתר החברה"

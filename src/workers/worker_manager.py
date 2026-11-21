@@ -4,15 +4,21 @@ import logging
 from db.jobs_repository import (
     auto_archive_old_applications,
     fetch_next_job,
+    find_existing_job,
     finish_analysis,
     finish_scrape,
-    get_job_by_url,
     mark_failed,
     reset_stuck_jobs,
     update_job_after_resolution,
 )
-from scraper_service.resolvers import URLResolver  # ייבוא ישיר
+from scraper_service.resolvers import (
+    ResolveError,
+    URLResolver,
+    hiremetech_token_status,
+    is_hiremetech,
+)
 from scraper_service.utils import failure_message
+from services.link_extractor import normalize_job_url
 from services.file_utils import CONTEXT_PATH, RESUME_PATH, read_text_file
 
 # טיפול גמיש בייבוא מנועים
@@ -25,11 +31,20 @@ except ImportError:
 
 logger = logging.getLogger("Workers")
 
+# Jina (עד 25 שניות, לפעמים פעמיים) + Playwright (עד ~45) - 60 לא הספיק כש-Jina איטי
+SCRAPE_TIMEOUT_SECONDS = 90
+
 
 async def resolver_worker():
     logger.info("🔍 Resolver Worker started")
     # מאתחלים רק את ה-Resolver, בלי כל ה-Scraper הכבד
     resolver = URLResolver()
+    token = hiremetech_token_status(resolver.hireme_token)
+    if not token["configured"] or token["expired"]:
+        logger.warning(
+            f"⚠️ HireMeTech token {'missing' if not token['configured'] else 'expired at ' + token['expires_at']}"
+            " - HireMeTech jobs will be analyzed from the public page, without the company name"
+        )
 
     while True:
         job = await fetch_next_job("PENDING_RESOLVE", "RESOLVING")
@@ -46,12 +61,13 @@ async def resolver_worker():
                     timeout=60,
                 )
 
-                # לוגיקת כפילויות (נשארת אותו דבר, אבל עכשיו היא נקייה יותר)
+                # הקישור מאתר החברה מגיע לרוב עם utm (למשל ?utm_source=hiremetech)
+                resolved_url = normalize_job_url(resolved_url) if resolved_url else resolved_url
                 if resolved_url and resolved_url != original_url:
                     logger.info(
                         f"🔗 [ID {job_id}] Resolver: resolved to new URL: {resolved_url}"
                     )
-                    existing = await get_job_by_url(resolved_url)
+                    existing = await find_existing_job(resolved_url, exclude_id=job_id)
                     if existing:
                         logger.warning(
                             f"🚫 [ID {job_id}] Resolver: resolved URL already exists in DB (Duplicate)"
@@ -75,7 +91,26 @@ async def resolver_worker():
 
             except asyncio.TimeoutError:
                 logger.error(f"⏲️ [ID {job_id}] Resolver timeout (60s) for {original_url}")
-                await mark_failed(job_id, "FAILED_RESOLVE", "Timeout (60s) בפענוח הקישור")
+                if is_hiremetech(original_url):
+                    await update_job_after_resolution(
+                        job_id, original_url, "WAITING_FOR_SCRAPE",
+                        note="HireMeTech: הפענוח לקח יותר מדי זמן (נותח לפי הדף הציבורי, בלי שם החברה)",
+                    )
+                else:
+                    await mark_failed(job_id, "FAILED_RESOLVE", "Timeout (60s) בפענוח הקישור")
+            except ResolveError as e:
+                if e.public_fallback:
+                    # HireMeTech: התיאור ציבורי - ממשיכים לסריקת הדף עצמו (בלי שם החברה),
+                    # וההערה נשמרת ב-error_log כדי שהמשתמש יידע לעדכן את הטוקן
+                    logger.warning(
+                        f"↪️ [ID {job_id}] Resolver: {e} - scraping the public page instead"
+                    )
+                    await update_job_after_resolution(
+                        job_id, original_url, "WAITING_FOR_SCRAPE", note=f"{e} (נותח לפי הדף הציבורי, בלי שם החברה)"
+                    )
+                else:
+                    logger.error(f"❌ [ID {job_id}] Resolver error for {original_url}: {e}")
+                    await mark_failed(job_id, "FAILED_RESOLVE", str(e))
             except Exception as e:
                 # ResolveError מכיל הודעה ברורה למשתמש (טוקן חסר / כפתור לא נמצא...)
                 logger.error(f"❌ [ID {job_id}] Resolver error for {original_url}: {e}")
@@ -101,11 +136,11 @@ async def scrape_worker():
             try:
                 logger.info(f"🕷️ [ID {job_id}] Scraper: starting to scrape {url}")
 
-                # הרצת ה-Scraper (מנסה Jina ואז Playwright)
+                # הרצת ה-Scraper (API של ה-ATS / Jina / Playwright)
                 trace = []
                 result = await asyncio.wait_for(
                     asyncio.to_thread(scraper.scrape, url, job_id=job_id, trace=trace),
-                    timeout=60,
+                    timeout=SCRAPE_TIMEOUT_SECONDS,
                 )
 
                 if result and result.get("full_description"):
@@ -127,9 +162,9 @@ async def scrape_worker():
                     await mark_failed(job_id, "NO_DATA", failure_message(reasons))
 
             except asyncio.TimeoutError:
-                logger.error(f"⏲️ [ID {job_id}] Scraper timeout (60s) for {url}")
+                logger.error(f"⏲️ [ID {job_id}] Scraper timeout ({SCRAPE_TIMEOUT_SECONDS}s) for {url}")
                 await mark_failed(
-                    job_id, "FAILED_SCRAPE", "Timeout (60s) during scraping"
+                    job_id, "FAILED_SCRAPE", f"Timeout ({SCRAPE_TIMEOUT_SECONDS}s) during scraping"
                 )
             except Exception as e:
                 logger.error(f"❌ [ID {job_id}] Scraper error for {url}: {e}")
