@@ -228,8 +228,26 @@ def test_failure_message_prefers_most_informative_reason():
     # Jina ראה דף התחברות, Playwright ראה דף בלי תוכן -> מדווחים על ההתחברות
     assert "התחברות" in failure_message(["login_wall", "no_job_content"])
     assert "סגורה" in failure_message(["too_short", "job_unavailable"])
-    assert "404" in failure_message(["http_error_404"])
+    assert "הוסרה" in failure_message(["http_error_404"])  # 404/410 = המשרה לא קיימת
+    assert "500" in failure_message(["http_error_500"])  # שגיאת שרת - לא אומרת שהמשרה הוסרה
     assert failure_message([None, "too_short"]) == "הסורק לא הצליח לחלץ תיאור משרה"
+
+
+def test_job_removed_beats_captcha_from_another_attempt():
+    """באג (Drushim): Jina קיבל 410 והמשרה נמחקה, אבל ההודעה הייתה 'האתר דורש CAPTCHA'."""
+    msg = failure_message(["http_error_410", "captcha"])
+    assert "הוסרה" in msg and "CAPTCHA" not in msg
+    # LinkedIn: Jina 404 + Playwright דף שגיאה
+    assert "הוסרה" in failure_message(["jina_selector_miss", "http_error_404", "error_page"])
+
+
+def test_not_found_title_is_reported_as_removed_not_login():
+    """באג (Arm): כותרת 'Page not found' דווחה כ'הסורק הגיע לדף התחברות או שגיאה'."""
+    text = "Title: Page not found | Arm Jobs & Careers\n\n" + "Explore careers at Arm. " * 40
+    assert validate_content(text) == (False, "not_found")
+    assert "הוסרה" in failure_message(["not_found", "not_found"])
+    # כותרת התחברות עדיין bad_title
+    assert validate_content("Title: Sign in | Acme\n\n" + "x " * 200) == (False, "bad_title")
 
 
 # ------------------------------------------------- redirects (real cases from data/links.txt)

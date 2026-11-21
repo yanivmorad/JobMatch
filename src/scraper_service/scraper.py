@@ -6,6 +6,7 @@ from typing import List, Optional
 import requests
 from dotenv import load_dotenv
 
+from scraper_service.site_apis import fetch_from_site_api
 from scraper_service.utils import clean_text, validate_content
 
 # ניסיון ייבוא שקט של Playwright
@@ -52,14 +53,20 @@ class Scraper:
         trace = trace if trace is not None else []
         start_time = time.time()
 
+        # 0. API ציבורי של מערכת הגיוס (Workday / BambooHR): דפי SPA ש-Jina מקבל מהם שלד ריק
+        api_result = self._try_site_api(target_url, id_tag, trace)
+        if api_result is not None:
+            return api_result or None  # {} = המשרה סגורה (תשובה סופית, אין טעם לנסות סורק אחר)
+
         # 1. ניסיון מהיר עם Jina AI (מקסימום 20 שניות)
         jina_result = self._try_jina(target_url, id_tag, trace)
         if jina_result:
             return jina_result
 
-        # בדיקה כמה זמן נשאר לנו (לפני שהוורקר הורג אותנו ב-60 שניות)
+        # בדיקה כמה זמן נשאר (ה-worker עוצר את הסריקה אחרי SCRAPE_TIMEOUT_SECONDS=90;
+        # Playwright לוקח עד ~45 שניות: טעינה 30 + המתנה לתוכן עד 14)
         elapsed = time.time() - start_time
-        if elapsed > 45:
+        if elapsed > 40:
             logger.error(
                 f"{id_tag}Scraper: Not enough time left for Playwright fallback"
             )
@@ -92,6 +99,43 @@ class Scraper:
             logger.warning(f"{id_tag}Scraper: Playwright content rejected ({reason})")
 
         return None
+
+    def _try_site_api(self, url: str, id_tag: str, trace: List[dict]) -> Optional[dict]:
+        """
+        None = האתר לא נתמך / ה-API נכשל -> ממשיכים ל-Jina.
+        {}   = ה-API אומר שהמשרה סגורה.
+        dict = תוצאה תקינה (כולל company / job_title מה-API).
+        """
+        t0 = time.time()
+        result = fetch_from_site_api(url, self.session)
+        if result is None:
+            return None
+        entry = {
+            "method": result.method,
+            "status": result.status,
+            "length": len(result.text or ""),
+            "valid": False,
+            "reason": result.reason,
+        }
+        try:
+            if result.reason == "job_unavailable":
+                return {}
+            if result.reason == "ok":
+                valid, reason = validate_content(result.text, url)
+                entry.update(valid=valid, reason=reason)
+                if valid:
+                    logger.info(f"{id_tag}Scraper: {result.method} success")
+                    return {
+                        "source": result.method,
+                        "full_description": clean_text(result.text),
+                        "company": result.company,
+                        "job_title": result.job_title,
+                    }
+            logger.info(f"{id_tag}Scraper: {result.method} not usable ({entry['reason']})")
+            return None
+        finally:
+            entry["seconds"] = round(time.time() - t0, 1)
+            trace.append(entry)
 
     def _try_jina(self, url: str, id_tag: str, trace: List[dict]) -> Optional[dict]:
         result = self._jina_request(url, id_tag, trace, self.headers)
@@ -135,6 +179,28 @@ class Scraper:
             trace.append(entry)
         return None
 
+    # מספיק טקסט כדי שזה כנראה כבר תיאור משרה ולא שלד של SPA
+    CONTENT_READY_CHARS = 1000
+
+    @classmethod
+    def _wait_for_content(cls, page, network_idle_ms: int = 8000, content_ms: int = 6000) -> None:
+        """
+        דפי SPA (Workday, BambooHR...) מרנדרים את המשרה רק אחרי קריאות API.
+        קודם: המתנה קבועה של 2 שניות, ואז חזר שלד ריק (9 / 25 תווים).
+        עכשיו: עד network idle, ואז עד שיש בדף מספיק טקסט - כל שלב עם תקרה, ובלי לזרוק.
+        """
+        try:
+            page.wait_for_load_state("networkidle", timeout=network_idle_ms)
+        except Exception:
+            pass  # אתרים עם polling / analytics אף פעם לא מגיעים ל-networkidle
+        try:
+            page.wait_for_function(
+                f"() => document.body && document.body.innerText.length > {cls.CONTENT_READY_CHARS}",
+                timeout=content_ms,
+            )
+        except Exception:
+            pass  # דף קצר באמת - validate_content יחליט
+
     def _scrape_with_playwright(
         self, url: str, job_id: Optional[int] = None
     ) -> Optional[str]:
@@ -161,7 +227,7 @@ class Scraper:
 
                     # ניסיון טעינה (30 שניות גג)
                     page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                    page.wait_for_timeout(2000)  # המתנה קטנה ל-JS
+                    self._wait_for_content(page)
 
                     # שורות Title / Final URL בפורמט של Jina, כדי ש-validate_content
                     # יבדוק גם את הכותרת וגם הפניה לרשימת המשרות (משרה שהוסרה)

@@ -69,6 +69,10 @@ _BAD_TITLE = re.compile(
     r"\bsign ?(in|up)\b|\blog ?in\b|just a moment|access denied|page not found|\b404\b|התחברות",
     re.IGNORECASE,
 )
+# כותרת "הדף לא נמצא" = המשרה הוסרה / הקישור שגוי (ולא דף התחברות)
+_NOT_FOUND_TITLE = re.compile(
+    r"page not found|not found|\b404\b|\b410\b|הדף לא נמצא|העמוד לא נמצא", re.IGNORECASE
+)
 
 # מילים שמופיעות כמעט בכל תיאור משרה. סופרים כמה שונות מופיעות.
 _JOB_SIGNALS = (
@@ -185,6 +189,8 @@ def validate_content(text: str, url: Optional[str] = None) -> Tuple[bool, str]:
 
     title_match = _TITLE_LINE.search(text) or _HTML_TITLE.search(text)
     if title_match and _BAD_TITLE.search(title_match.group(1)):
+        if _NOT_FOUND_TITLE.search(title_match.group(1)):
+            return False, "not_found"
         return False, "bad_title"
 
     body = _JINA_HEADER.sub("", text).strip()
@@ -218,6 +224,7 @@ def is_content_valid(text: str) -> bool:
 # הודעות למשתמש (מוצגות ב-UI ב-error_log) לפי סיבת הכישלון
 FAILURE_MESSAGES = {
     "job_unavailable": "המשרה סגורה או אינה זמינה יותר",
+    "not_found": "המשרה הוסרה או שהקישור שגוי (הדף לא נמצא)",
     "blocked": "האתר חסם את הסורק (הגנת בוטים / שגיאה) - אפשר להדביק את תיאור המשרה ידנית",
     "captcha": "האתר דורש אימות CAPTCHA - אפשר להדביק את תיאור המשרה ידנית",
     "login_wall": "האתר דורש התחברות כדי לראות את המשרה - אפשר להדביק את תיאור המשרה ידנית",
@@ -225,8 +232,12 @@ FAILURE_MESSAGES = {
     "error_page": "הקישור מוביל לדף שגיאה (לא נמצא / אין גישה)",
     "cookie_wall": "הסורק נתקע בהודעת cookies - אפשר להדביק את תיאור המשרה ידנית",
 }
+# הסדר קובע: תשובה "סופית" (המשרה סגורה / האתר החזיר 404-410) גוברת על חסימה של ניסיון
+# אחר. למשל Drushim: Jina קיבל 410 (המשרה נמחקה) ו-Playwright קיבל CAPTCHA - ההודעה
+# הנכונה היא "המשרה הוסרה", לא "הדבק ידנית".
 _FAILURE_PRIORITY = (
     "job_unavailable",
+    "not_found",
     "login_wall",
     "captcha",
     "blocked",
@@ -240,6 +251,8 @@ DEFAULT_FAILURE_MESSAGE = "הסורק לא הצליח לחלץ תיאור משר
 def failure_message(reasons) -> str:
     """בוחר את ההודעה הכי אינפורמטיבית מתוך הסיבות של כל הניסיונות (Jina, Playwright)."""
     reasons = [r for r in reasons if r]
+    # האתר עצמו החזיר 404 / 410 (דרך Jina) = המשרה לא קיימת יותר
+    reasons = ["not_found" if r in ("http_error_404", "http_error_410") else r for r in reasons]
     for key in _FAILURE_PRIORITY:
         if key in reasons:
             return FAILURE_MESSAGES[key]
