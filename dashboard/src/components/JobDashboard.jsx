@@ -7,6 +7,7 @@ import AppliedJobsTab from './AppliedJobsTab/AppliedJobsTab';
 import ProfileTab from './ProfileTab';
 import OverviewTab from './OverviewTab';
 import { taskService } from '../services/taskService';
+import { isInPipeline, isProcessing } from '../constants/jobStatus';
 
 const JobDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -31,9 +32,7 @@ const JobDashboard = () => {
 
   // --- 2. Polling (רענון אוטומטי למשרות בתהליך) ---
   useEffect(() => {
-    const hasPending = jobs.some(j => 
-      ['NEW', 'PENDING_RESOLVE', 'RESOLVING', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING'].includes(j.status)
-    );
+    const hasPending = jobs.some(j => isProcessing(j.status));
 
     let interval = null;
     if (hasPending) {
@@ -139,9 +138,8 @@ const JobDashboard = () => {
     );
   });
 
-  const pendingJobs = filteredJobs.filter(j =>
-    ['NEW', 'PENDING_RESOLVE', 'RESOLVING', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING', 'FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA', 'DUPLICATE'].includes(j.status)
-  );
+  // בעיבוד + נכשלו (FAILED_RESOLVE היה חסר כאן, ולכן משרות שנכשלו בפענוח נעלמו מהממשק)
+  const pendingJobs = filteredJobs.filter(j => isInPipeline(j.status));
 
   const activeJobs = filteredJobs
     .filter(j => 
