@@ -183,6 +183,18 @@ async def init_db(conn):
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS not_before TIMESTAMP WITH TIME ZONE"
     )
 
+    # הפרופיל (קורות חיים + הקשר אישי). קודם נשמר רק בקבצים ב-data/, שנמחקים בכל דיפלוי
+    # ב-Render (דיסק זמני) - עריכה בלשונית הפרופיל הייתה נעלמת.
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS profile (
+            key TEXT PRIMARY KEY,
+            content TEXT NOT NULL,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+        """
+    )
+
     # שימוש יומי ב-API של ה-AI (לפי יום פסיפיק - כמו איפוס המכסה של Gemini), שורד הפעלה מחדש
     await conn.execute(
         """
