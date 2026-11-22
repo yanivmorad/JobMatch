@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { taskService } from '../services/taskService';
 
 export const useJobActions = (onJobAdded) => {
@@ -46,10 +46,11 @@ export const useJobActions = (onJobAdded) => {
     }
   };
 
-  const handleUrlSubmit = async (parsedLinks, callback) => {
+  // טקסט גולמי -> השרת מחלץ את קישורי המשרות (services/link_extractor.py)
+  const handleRawSubmit = async (rawText, callback) => {
     const result = await handleActionWrapper(async () => {
-      const data = await taskService.addJobUrls(parsedLinks);
-      
+      const data = await taskService.addRawText(rawText);
+
       if (data.skipped_urls && data.skipped_urls.length > 0) {
         if (data.added === 0) {
           const error = new Error('All URLs were duplicates');
@@ -64,7 +65,7 @@ export const useJobActions = (onJobAdded) => {
     return result;
   };
 
-  const handleTextSubmit = async (text, title, originalUrl = null, isFixModal = false, callback) => {
+  const handleTextSubmit = async (text, title, originalUrl = null, callback) => {
     return handleActionWrapper(async () => {
       await taskService.addManualJob(text, title, originalUrl);
       if (callback) callback();
@@ -105,7 +106,7 @@ export const useJobActions = (onJobAdded) => {
     submitStatus,
     duplicateJobs,
     setDuplicateJobs,
-    handleUrlSubmit,
+    handleRawSubmit,
     handleTextSubmit,
     handleManualUpdate,
     handleRescan,

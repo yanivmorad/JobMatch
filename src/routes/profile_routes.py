@@ -17,16 +17,15 @@ router = APIRouter(tags=["profile"])
 
 @router.get("/resume")
 async def get_resume():
-    """קריאת קורות החיים"""
-    content = get_resume_content()
-    return {"content": content}
+    """קריאת קורות החיים (מה-DB)"""
+    return {"content": await get_resume_content()}
 
 
 @router.post("/resume")
 async def update_resume(data: ProfileContent):
-    """עדכון קורות החיים"""
+    """עדכון קורות החיים (נשמר ב-DB - שורד דיפלוי)"""
     try:
-        update_resume_content(data.content)
+        await update_resume_content(data.content)
         return {"message": "Resume updated successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -34,16 +33,15 @@ async def update_resume(data: ProfileContent):
 
 @router.get("/context")
 async def get_context():
-    """קריאת ההקשר האישי"""
-    content = get_context_content()
-    return {"content": content}
+    """קריאת ההקשר האישי (מה-DB)"""
+    return {"content": await get_context_content()}
 
 
 @router.post("/context")
 async def update_context(data: ProfileContent):
-    """עדכון ההקשר האישי"""
+    """עדכון ההקשר האישי (נשמר ב-DB - שורד דיפלוי)"""
     try:
-        update_context_content(data.content)
+        await update_context_content(data.content)
         return {"message": "Context updated successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

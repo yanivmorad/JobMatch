@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Navbar from './Navbar';
 import ActiveJobsTab from './ActiveJobsTab';
 import AddJobsTab from './AddJobsTab/AddJobsTab';
@@ -7,42 +7,72 @@ import AppliedJobsTab from './AppliedJobsTab/AppliedJobsTab';
 import ProfileTab from './ProfileTab';
 import OverviewTab from './OverviewTab';
 import { taskService } from '../services/taskService';
+import { isInPipeline, isProcessing } from '../constants/jobStatus';
+
+const QUEUE_POLL_MS = 5000;
+
+// משרות שממתינות לניתוח בזמן שמכסת ה-AI נגמרה: בלי ההסבר הזה הן נראות "תקועות"
+const AiQuotaBanner = ({ pausedUntil, waiting }) => {
+  if (!pausedUntil || waiting === 0) return null;
+  const until = new Date(pausedUntil).toLocaleString('he-IL', {
+    weekday: 'short', hour: '2-digit', minute: '2-digit',
+  });
+  return (
+    <div className="w-full bg-amber-50 border-b border-amber-200 text-amber-900 text-sm font-medium px-6 py-3 text-center" dir="rtl">
+      ⏸️ המכסה היומית של ה-AI (Gemini, תוכנית חינמית) נוצלה. {waiting} משרות ממתינות לניתוח
+      והניתוח ימשיך אוטומטית ב-{until}. שום משרה לא אבדה.
+    </div>
+  );
+};
 
 const JobDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [jobs, setJobs] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  // כל מודלי ה-AI בהפסקה (המכסה היומית החינמית של Gemini נוצלה) - עד מתי
+  const [aiPausedUntil, setAiPausedUntil] = useState(null);
 
   // --- 1. שליפת נתונים ---
   const fetchJobs = async () => {
     try {
       const data = await taskService.getJobs();
       setJobs(data);
-      setLoading(false);
     } catch (err) {
       console.error("Connection Error", err);
     }
   };
 
+  // טעינה ראשונית: setState רק ב-callback של ה-Promise (לא סינכרונית בתוך ה-effect),
+  // ולא אחרי שהקומפוננטה ירדה מהמסך
   useEffect(() => {
-    fetchJobs();
+    let cancelled = false;
+    taskService.getJobs()
+      .then(data => { if (!cancelled) setJobs(data); })
+      .catch(err => console.error("Connection Error", err));
+    return () => { cancelled = true; };
   }, []);
 
   // --- 2. Polling (רענון אוטומטי למשרות בתהליך) ---
+  // קודם: כל 2 שניות כל המשרות, כולל תיאורים מלאים (עשרות KB למשרה) - עומס מיותר על
+  // השרת וה-DB בענן. עכשיו: כל 5 שניות בקשה קטנה למצב התור, ואת הרשימה המלאה מושכים
+  // רק כשמשהו השתנה (version).
+  const queueVersion = useRef(null);
   useEffect(() => {
-    const hasPending = jobs.some(j => 
-      ['NEW', 'PENDING_RESOLVE', 'RESOLVING', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING'].includes(j.status)
-    );
+    if (!jobs.some(j => isProcessing(j.status))) return;
 
-    let interval = null;
-    if (hasPending) {
-      interval = setInterval(fetchJobs, 2000);
-    }
-    
-    return () => {
-      if (interval) clearInterval(interval);
-    };
+    const interval = setInterval(async () => {
+      try {
+        const { version, ai } = await taskService.getQueueSnapshot();
+        setAiPausedUntil(ai?.paused_until || null);
+        const changed = queueVersion.current !== null && version !== queueVersion.current;
+        queueVersion.current = version;
+        if (changed) fetchJobs();
+      } catch (err) {
+        console.error("Queue poll failed", err);
+      }
+    }, QUEUE_POLL_MS);
+
+    return () => clearInterval(interval);
   }, [jobs]);
 
   // --- 3. Actions (פונקציות עבודה) ---
@@ -139,9 +169,8 @@ const JobDashboard = () => {
     );
   });
 
-  const pendingJobs = filteredJobs.filter(j =>
-    ['NEW', 'PENDING_RESOLVE', 'RESOLVING', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING', 'FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA', 'DUPLICATE'].includes(j.status)
-  );
+  // בעיבוד + נכשלו (FAILED_RESOLVE היה חסר כאן, ולכן משרות שנכשלו בפענוח נעלמו מהממשק)
+  const pendingJobs = filteredJobs.filter(j => isInPipeline(j.status));
 
   const activeJobs = filteredJobs
     .filter(j => 
@@ -171,13 +200,14 @@ const JobDashboard = () => {
         />
       </div>
 
+      <AiQuotaBanner pausedUntil={aiPausedUntil} waiting={jobs.filter(j => j.status === 'WAITING_FOR_AI').length} />
+
       <main className="flex-1 w-full flex justify-center bg-slate-50/50">
         <div className="w-full max-w-[90%] mx-auto px-4 py-8 flex flex-col">          
           <div className="w-full transition-all duration-500 ease-in-out"> 
             {activeTab === 'dashboard' && (
-              <OverviewTab 
-                jobs={filteredJobs}
-                activeJobs={activeJobs} 
+              <OverviewTab
+                activeJobs={activeJobs}
                 appliedJobs={appliedJobs}
                 pendingJobs={pendingJobs}
                 onAction={handleCardAction}

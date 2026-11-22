@@ -5,6 +5,7 @@ import SmartImportCard from './SmartImportCard';
 import ManualInputCard from './ManualInputCard';
 import AttentionRequiredList from './AttentionRequiredList';
 import { Sparkles } from 'lucide-react';
+import { isFailed, isProcessing } from '../../constants/jobStatus';
 
 const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
   const [rawInput, setRawInput] = useState('');
@@ -17,7 +18,7 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
     submitStatus,
     duplicateJobs,
     setDuplicateJobs,
-    handleUrlSubmit,
+    handleRawSubmit,
     handleTextSubmit,
     handleManualUpdate,
     handleRescan,
@@ -28,25 +29,28 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
 
   const { activeQueue, failedJobs } = useMemo(() => {
     return {
-      activeQueue: pendingJobs.filter(j => !['FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA', 'DUPLICATE'].includes(j.status)),
-      failedJobs: pendingJobs.filter(j => ['FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA', 'DUPLICATE'].includes(j.status))
+      activeQueue: pendingJobs.filter(j => isProcessing(j.status)),
+      failedJobs: pendingJobs.filter(j => isFailed(j.status))
     };
   }, [pendingJobs]);
 
   return (
     <div className="w-full min-h-screen bg-slate-50/50" dir="rtl">
-      <ManualFixModal 
-        isOpen={isFixModalOpen}
-        onClose={() => setIsFixModalOpen(false)}
-        job={jobToFix}
-        onSubmit={async (jobId, title, content) => {
-          const success = await handleManualUpdate(jobId, content);
-          if (success) {
-            setIsFixModalOpen(false);
-          }
-        }}
-        isSubmitting={submitStatus === 'sending'}
-      />
+      {isFixModalOpen && jobToFix && (
+        <ManualFixModal
+          key={jobToFix.id ?? jobToFix.url}
+          isOpen={isFixModalOpen}
+          onClose={() => setIsFixModalOpen(false)}
+          job={jobToFix}
+          onSubmit={async (jobId, title, content) => {
+            const success = await handleManualUpdate(jobId, content);
+            if (success) {
+              setIsFixModalOpen(false);
+            }
+          }}
+          isSubmitting={submitStatus === 'sending'}
+        />
+      )}
 
       <div className="max-w-[1600px] mx-auto w-full px-6 py-10 flex flex-col gap-10">
 <section className="flex flex-col items-center text-center gap-4 mb-4">
@@ -72,7 +76,7 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
               duplicateJobs={duplicateJobs}
               setDuplicateJobs={setDuplicateJobs}
               submitStatus={submitStatus}
-              onSubmit={(parsedLinks) => handleUrlSubmit(parsedLinks, () => setRawInput(''))}
+              onSubmit={(rawText) => handleRawSubmit(rawText, () => setRawInput(''))}
             />
 
             <ManualInputCard 
@@ -81,7 +85,7 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
               textInput={textInput}
               setTextInput={setTextInput}
               submitStatus={submitStatus}
-              onSubmit={(text, title) => handleTextSubmit(text, title, null, false, () => {
+              onSubmit={(text, title) => handleTextSubmit(text, title, null, () => {
                 setTextInput('');
                 setTextTitle('');
               })}

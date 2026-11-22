@@ -1,6 +1,9 @@
 # src/db/postgres.py
+import asyncio
 import logging
 import os
+
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import asyncpg
 from dotenv import load_dotenv
@@ -9,94 +12,248 @@ logger = logging.getLogger("JobMatchServer")
 
 load_dotenv()
 
-DB_CONFIG = {
-    "user": os.getenv("PG_USER"),
-    "password": os.getenv("PG_PASSWORD"),
-    "database": os.getenv("PG_DB"),
-    "host": os.getenv("PG_HOST", "localhost"),
-    "port": int(os.getenv("PG_PORT", 5432)),
-}
 _pool = None
+_pool_lock = None
+
+# כל הערכים של ה-Enum. ערכים חדשים מתווספים כאן בלבד (ADD VALUE IF NOT EXISTS).
+JOB_STATUSES = (
+    "NEW",
+    "PENDING_RESOLVE",
+    "RESOLVING",
+    "WAITING_FOR_SCRAPE",
+    "SCRAPING",
+    "WAITING_FOR_AI",
+    "ANALYZING",
+    "COMPLETED",
+    "FAILED_RESOLVE",
+    "FAILED_SCRAPE",
+    "FAILED_ANALYSIS",
+    "NO_DATA",
+    "DUPLICATE",
+)
+
+
+# פרמטרים במחרוזת החיבור שאינם של asyncpg: asyncpg שולח פרמטר לא מוכר לשרת כהגדרת
+# session ("unrecognized configuration parameter"). Neon מוסיף channel_binding=require כברירת מחדל.
+_UNSUPPORTED_DSN_PARAMS = {"channel_binding"}
+
+
+def _clean_dsn(dsn: str) -> str:
+    parts = urlsplit(dsn)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k not in _UNSUPPORTED_DSN_PARAMS]
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
+
+def _pool_settings(dsn_host: str) -> dict:
+    """
+    - min_size קטן: ברירת המחדל של asyncpg פותחת 10 חיבורים מראש.
+    - max_inactive_connection_lifetime: חיבור רדום נסגר אחרי דקה. Neon (חינמי) נרדם אחרי
+      5 דקות בלי פעילות וסוגר את החיבורים; חיבור ישן ב-pool היה נכשל בבקשה הבאה.
+    - pooler של Neon (PgBouncer, host עם "-pooler"): בלי מטמון prepared statements.
+    """
+    try:
+        max_size = max(1, int(os.getenv("DB_POOL_MAX") or 5))
+    except ValueError:
+        max_size = 5
+    settings = {"min_size": 1, "max_size": max_size, "max_inactive_connection_lifetime": 60}
+    if "-pooler" in (dsn_host or ""):
+        settings["statement_cache_size"] = 0
+    return settings
+
+
+def _connect_kwargs() -> dict:
+    """
+    DATABASE_URL (Neon / Supabase / Render) מקבל עדיפות.
+    אחרת - משתני PG_* הישנים, לסביבה מקומית.
+    נקרא בזמן יצירת ה-pool (ולא בזמן import) כדי שאפשר יהיה להחליף DB בבדיקות.
+    """
+    dsn = (os.getenv("DATABASE_URL") or "").strip()
+    if dsn:
+        return {"dsn": _clean_dsn(dsn), **_pool_settings(urlsplit(dsn).hostname)}
+    return {
+        **_pool_settings(os.getenv("PG_HOST", "localhost")),
+        "user": os.getenv("PG_USER"),
+        "password": os.getenv("PG_PASSWORD"),
+        "database": os.getenv("PG_DB"),
+        "host": os.getenv("PG_HOST", "localhost"),
+        "port": int(os.getenv("PG_PORT", 5432)),
+    }
 
 
 async def get_pool():
-    global _pool
-    if _pool is None:
-        # פונקציה שתרוץ על כל חיבור חדש - רק כדי ללמד אותו להכיר את ה-Enum
-        async def setup_connection(conn):
-            await conn.set_type_codec(
-                "job_status", schema="public", encoder=str, decoder=str
-            )
+    global _pool, _pool_lock
+    if _pool is not None:
+        return _pool
 
-        # יצירת ה-Pool
-        _pool = await asyncpg.create_pool(**DB_CONFIG, setup=setup_connection)
+    if _pool_lock is None:
+        _pool_lock = asyncio.Lock()
 
-        # --- אתחול חד פעמי של הטבלאות ---
-        # אנחנו לוקחים חיבור אחד באופן יזום ומריצים עליו את ההקמה
-        async with _pool.acquire() as conn:
-            await init_db(conn)
+    async with _pool_lock:
+        if _pool is None:
+            # הערה: asyncpg מחזיר ערכי Enum כ-str כברירת מחדל, ולכן אין צורך ב-set_type_codec.
+            # (הקריאה הקודמת ל-set_type_codec נכשלה על DB ריק, כי הטיפוס עוד לא היה קיים)
+            pool = await asyncpg.create_pool(**_connect_kwargs())
+            try:
+                async with pool.acquire() as conn:
+                    await init_db(conn)
+            except Exception:
+                await pool.close()
+                raise
+            _pool = pool
 
     return _pool
 
 
-async def init_db(conn):
-    """יוצר את הטיפוסים והטבלאות אם הם לא קיימים"""
-    # בדיקה מהירה אם הטבלה קיימת כדי לא להציף את הלוגים סתם
-    table_exists = await conn.fetchval(
-        "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'jobs')"
+async def close_pool():
+    """סוגר את ה-pool (בכיבוי השרת ובין בדיקות)."""
+    global _pool, _pool_lock
+    if _pool is not None:
+        await _pool.close()
+    _pool = None
+    _pool_lock = None
+
+
+# סטטוסים שמשמעותם "הגשתי" (גם אם התקדם לראיון / נדחה / לא חזרו)
+APPLIED_STATUSES = ("applied", "phone_screen", "interview", "rejected", "ghosted")
+
+
+async def _migrate_applied_at(conn):
+    """
+    applied_at = מתי הוגשה המועמדות (הארכוב האוטומטי סופר ממנו 30 יום, ולא מ-created_at).
+    ב-DB ישן העמודה נוספת וממולאת פעם אחת מ-updated_at: זה קירוב (זמן העדכון האחרון של
+    השורה, כלומר לא לפני ההגשה), כך שמשרה לא תסומן ghosted מוקדם מדי.
+    """
+    exists = await conn.fetchval(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'jobs' AND column_name = 'applied_at'
+        )
+        """
+    )
+    if exists:
+        return
+    await conn.execute(
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS applied_at TIMESTAMP WITH TIME ZONE"
+    )
+    await conn.execute(
+        """
+        UPDATE jobs SET applied_at = COALESCE(updated_at, created_at)
+        WHERE applied_at IS NULL AND application_status = ANY($1::text[])
+        """,
+        list(APPLIED_STATUSES),
     )
 
-    # --- MIGRATION: Ensure all job_status enum values exist ---
-    # Note: ADD VALUE IF NOT EXISTS requires Postgres 12+
-    await conn.execute("""
-        DO $$ 
+
+async def init_db(conn):
+    """
+    יוצר / מעדכן את הסכמה. כל הפעולות idempotent, כך שבטוח להריץ שוב ושוב:
+    על DB ריק (Docker / Neon) ועל DB קיים שנוצר בגרסה ישנה.
+    """
+    # 1. טיפוס הסטטוס
+    await conn.execute(
+        """
+        DO $$
         BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'job_status') THEN
-                CREATE TYPE job_status AS ENUM (
-                    'NEW', 'PENDING_RESOLVE', 'RESOLVING', 'WAITING_FOR_SCRAPE', 
-                    'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING', 'COMPLETED', 
-                    'FAILED_RESOLVE', 'FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA',
-                    'DUPLICATE'
-                );
-            ELSE
-                BEGIN
-                    ALTER TYPE job_status ADD VALUE IF NOT EXISTS 'PENDING_RESOLVE';
-                EXCEPTION WHEN others THEN NULL; END;
-                
-                BEGIN
-                    ALTER TYPE job_status ADD VALUE IF NOT EXISTS 'RESOLVING';
-                EXCEPTION WHEN others THEN NULL; END;
-                
-                BEGIN
-                    ALTER TYPE job_status ADD VALUE IF NOT EXISTS 'FAILED_RESOLVE';
-                EXCEPTION WHEN others THEN NULL; END;
-
-                BEGIN
-                    ALTER TYPE job_status ADD VALUE IF NOT EXISTS 'DUPLICATE';
-                EXCEPTION WHEN others THEN NULL; END;
+                CREATE TYPE job_status AS ENUM ('NEW');
             END IF;
         END $$;
-    """)
+        """
+    )
+    # כל ערך בנפרד: ADD VALUE IF NOT EXISTS (Postgres 12+)
+    for status in JOB_STATUSES:
+        await conn.execute(f"ALTER TYPE job_status ADD VALUE IF NOT EXISTS '{status}'")
 
-    # --- MIGRATION: Ensure updated_at column and trigger exist ---
-    await conn.execute("""
-        DO $$ 
+    # 2. הטבלה (נוצרת רק אם לא קיימת)
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobs (
+            id SERIAL PRIMARY KEY,
+            url TEXT UNIQUE NOT NULL,
+            source_url TEXT,
+            status job_status DEFAULT 'NEW',
+            company TEXT DEFAULT 'Identifying...',
+            job_title TEXT DEFAULT 'Identifying...',
+            source TEXT,
+            full_description TEXT,
+            analysis_result JSONB,
+            user_action TEXT DEFAULT 'none',
+            application_status TEXT DEFAULT 'pending',
+            applied_at TIMESTAMP WITH TIME ZONE,
+            is_archived BOOLEAN DEFAULT FALSE,
+            error_log TEXT,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            not_before TIMESTAMP WITH TIME ZONE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            scraped_at TIMESTAMP WITH TIME ZONE,
+            analyzed_at TIMESTAMP WITH TIME ZONE
+        );
+        """
+    )
+
+    # 3. Migrations לטבלאות שנוצרו בגרסאות קודמות
+    await conn.execute(
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()"
+    )
+    await conn.execute(
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS application_status TEXT DEFAULT 'pending'"
+    )
+    await _migrate_applied_at(conn)
+    # source_url = הקישור כפי שהמשתמש שלח אותו. url מוחלף אחרי פענוח (HireMeTech -> אתר החברה),
+    # ובלי source_url אותה משרה שנשלחה שוב לא זוהתה ככפולה עד אחרי פענוח נוסף בדפדפן.
+    await conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_url TEXT")
+    await conn.execute("UPDATE jobs SET source_url = url WHERE source_url IS NULL")
+    # retry_count: כמה ניסיונות כושלים (תקלה זמנית / קריסת שרת באמצע) - אחרי MAX_JOB_ATTEMPTS המשרה נכשלת.
+    # not_before: ניסיון חוזר מתוזמן (backoff) - ה-worker לא לוקח את המשרה לפני הזמן הזה.
+    await conn.execute(
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0"
+    )
+    await conn.execute(
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS not_before TIMESTAMP WITH TIME ZONE"
+    )
+
+    # הפרופיל (קורות חיים + הקשר אישי). קודם נשמר רק בקבצים ב-data/, שנמחקים בכל דיפלוי
+    # ב-Render (דיסק זמני) - עריכה בלשונית הפרופיל הייתה נעלמת.
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS profile (
+            key TEXT PRIMARY KEY,
+            content TEXT NOT NULL,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+        """
+    )
+
+    # שימוש יומי ב-API של ה-AI (לפי יום פסיפיק - כמו איפוס המכסה של Gemini), שורד הפעלה מחדש
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS api_usage (
+            day DATE NOT NULL,
+            model TEXT NOT NULL,
+            requests INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (day, model)
+        )
+        """
+    )
+
+    # 4. טריגר updated_at
+    await conn.execute(
+        """
+        CREATE OR REPLACE FUNCTION update_updated_at_column()
+        RETURNS TRIGGER AS $$
         BEGIN
-            -- 1. Check for column
-            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'jobs' AND column_name = 'updated_at') THEN
-                ALTER TABLE jobs ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
-            END IF;
-
-            -- 2. Create function
-            CREATE OR REPLACE FUNCTION update_updated_at_column()
-            RETURNS TRIGGER AS $inner$
-            BEGIN
-                NEW.updated_at = NOW();
-                RETURN NEW;
-            END;
-            $inner$ language 'plpgsql';
-
-            -- 3. Create trigger
+            NEW.updated_at = NOW();
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+        """
+    )
+    await conn.execute(
+        """
+        DO $$
+        BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_jobs_updated_at') THEN
                 CREATE TRIGGER update_jobs_updated_at
                 BEFORE UPDATE ON jobs
@@ -104,57 +261,15 @@ async def init_db(conn):
                 EXECUTE FUNCTION update_updated_at_column();
             END IF;
         END $$;
-    """)
+        """
+    )
 
-    if not table_exists:
-        logger.info("🛠️ Initializing Database schema...")
-
-        # 2. יצירת פונקציית טריגר לעדכון updated_at
-        await conn.execute("""
-            CREATE OR REPLACE FUNCTION update_updated_at_column()
-            RETURNS TRIGGER AS $$
-            BEGIN
-                NEW.updated_at = NOW();
-                RETURN NEW;
-            END;
-            $$ language 'plpgsql';
-        """)
-
-        # 3. יצירת הטבלה
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS jobs (
-                id SERIAL PRIMARY KEY,
-                url TEXT UNIQUE NOT NULL,
-                status job_status DEFAULT 'NEW',
-                company TEXT DEFAULT 'Identifying...',
-                job_title TEXT DEFAULT 'Identifying...',
-                source TEXT,
-                full_description TEXT,
-                analysis_result JSONB,
-                user_action TEXT DEFAULT 'none',
-                is_archived BOOLEAN DEFAULT FALSE,
-                error_log TEXT,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                scraped_at TIMESTAMP WITH TIME ZONE,
-                analyzed_at TIMESTAMP WITH TIME ZONE
-            );
-        """)
-
-        # 4. יצירת הטריגר
-        await conn.execute("""
-            DROP TRIGGER IF EXISTS update_jobs_updated_at ON jobs;
-            CREATE TRIGGER update_jobs_updated_at
-            BEFORE UPDATE ON jobs
-            FOR EACH ROW
-            EXECUTE FUNCTION update_updated_at_column();
-        """)
-
-        # 5. אינדקסים
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);"
-        )
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs(updated_at);"
-        )
-        logger.info("✅ Database schema is ready with updated_at trigger.")
+    # 5. אינדקסים
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_source_url ON jobs(source_url)"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs(updated_at)"
+    )
+    logger.info("✅ Database schema is ready")

@@ -1,7 +1,27 @@
 
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8000/api';
+// כתובת השרת: VITE_API_URL בזמן build. בלי הגדרה - בפיתוח (vite dev) השרת המקומי,
+// ובבנייה לייצור אותה כתובת שממנה הדשבורד נטען (השרת מגיש את הדשבורד בעצמו).
+const API_ORIGIN = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://localhost:8000' : '');
+const API_BASE_URL = `${API_ORIGIN.replace(/\/$/, '')}/api`;
+
+// הטוקן של ה-API (API_TOKEN בשרת) נשמר בדפדפן הזה בלבד - לא נבנה לתוך ה-JS
+const TOKEN_KEY = 'jobmatch_api_token';
+export const getApiToken = () => {
+  try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
+};
+export const setApiToken = (token) => {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch { /* מצב פרטי / אחסון חסום - הטוקן יחזיק עד רענון */ }
+  memoryToken = token || '';
+};
+let memoryToken = getApiToken();
+
+// אירוע גלובלי כשהשרת דוחה את הטוקן - App מציג מסך הזנת טוקן
+export const UNAUTHORIZED_EVENT = 'jobmatch:unauthorized';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -9,6 +29,19 @@ const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+apiClient.interceptors.request.use(request => {
+  if (memoryToken) request.headers.Authorization = `Bearer ${memoryToken}`;
+  return request;
+});
+
+apiClient.interceptors.response.use(
+  response => response,
+  error => {
+    if (error.response?.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    return Promise.reject(error);
+  }
+);
 
 // --- Axios Logging Interceptors ---
 apiClient.interceptors.request.use(request => {
@@ -45,9 +78,27 @@ export const taskService = {
     return response.data;
   },
 
+  // מצב התור בבקשה קטנה (ספירה לפי סטטוס + version) - ל-polling בזמן עיבוד
+  getQueueSnapshot: async () => {
+    const response = await apiClient.get('/jobs/queue');
+    return response.data;
+  },
+
   // הוספת משרות חדשות (URLs)
   addJobUrls: async (urls) => {
     const response = await apiClient.post('/jobs/url', { urls });
+    return response.data;
+  },
+
+  // טקסט גולמי (הודעות וואטסאפ וכו'): השרת מחלץ את קישורי המשרות ומכניס אותם לתור
+  addRawText: async (text) => {
+    const response = await apiClient.post('/jobs/raw', { text });
+    return response.data;
+  },
+
+  // תצוגה מקדימה: אילו קישורים יוכנסו ואילו יסוננו (לא שומר כלום)
+  extractLinks: async (text) => {
+    const response = await apiClient.post('/jobs/extract-links', { text });
     return response.data;
   },
 

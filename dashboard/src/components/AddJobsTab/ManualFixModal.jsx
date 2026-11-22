@@ -1,16 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Sparkles, ExternalLink, X, Loader2, CheckCircle } from 'lucide-react';
 
+// ההורה מרנדר את המודאל רק כשהוא פתוח (עם key לפי המשרה), כך שכל פתיחה מתחילה
+// ב-state חדש מה-props - בלי useEffect שמאפס state (react-hooks/set-state-in-effect)
 const ManualFixModal = ({ isOpen, onClose, job, onSubmit, isSubmitting }) => {
   const [content, setContent] = useState('');
-  const [title, setTitle] = useState('');
-
-  useEffect(() => {
-    if (isOpen && job) {
-      setTitle(job.company !== 'Unknown' ? job.company : '');
-      setContent('');
-    }
-  }, [isOpen, job]);
+  const [title, setTitle] = useState(() => (job && job.company !== 'Unknown' ? job.company : ''));
 
   if (!isOpen || !job) return null;
 

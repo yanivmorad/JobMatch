@@ -7,6 +7,7 @@ import JobModalHeader from './JobModalHeader';
 import JobAnalysisSection from './JobAnalysisSection';
 import JobInsightsGrid from './JobInsightsGrid';
 import JobActionPanel from './JobActionPanel';
+import { needsManualContent } from '../../constants/jobStatus';
 
 /**
  * קומפוננטת המודל הראשית - משמשת כקונטיינר ומנהלת סטייט
@@ -14,7 +15,7 @@ import JobActionPanel from './JobActionPanel';
 const JobModal = ({ job, onClose, onAction, onDelete, onUpdateStatus, onRetry }) => {
   const [showFullDesc, setShowFullDesc] = useState(false);
   const [showFullSummary, setShowFullSummary] = useState(false);
-  const [isEditing, setIsEditing] = useState(['FAILED_SCRAPE', 'NO_DATA'].includes(job.status));
+  const [isEditing, setIsEditing] = useState(needsManualContent(job.status));
   const [editTitle, setEditTitle] = useState(job.job_title || '');
   const [editCompany, setEditCompany] = useState(job.company || '');
   const [editDesc, setEditDesc] = useState(job.full_description || '');

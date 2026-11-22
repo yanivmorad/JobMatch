@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertCircle, CheckCircle, ExternalLink, RefreshCw, X, Edit3, Trash2 } from 'lucide-react';
 import { ActiveQueueList } from '../ActiveQueueList';
+import { FAILED_STATUS_LABELS } from '../../constants/jobStatus';
 
 const AttentionRequiredList = ({ 
   failedJobs, 
@@ -90,10 +91,7 @@ const AttentionRequiredList = ({
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center justify-between">
                       <span className={`${isDuplicate ? 'text-amber-600' : 'text-rose-600'} text-[10px] font-black uppercase tracking-widest`}>
-                        {isDuplicate ? 'משרה כפולה (כבר קיימת במערכת)' : 
-                         job.status === 'FAILED_SCRAPE' ? 'נכשל בסריקה' : 
-                         job.status === 'FAILED_ANALYSIS' ? 'נכשל בניתוח AI' : 
-                         'אין מידע'}
+                        {FAILED_STATUS_LABELS[job.status] || 'אין מידע'}
                       </span>
                       <a href={job.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 text-xs flex items-center gap-1">
                         קישור <ExternalLink size={10} />

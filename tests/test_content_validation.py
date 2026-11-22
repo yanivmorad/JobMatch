@@ -1,0 +1,384 @@
+import pytest
+
+from scraper_service.utils import DEFAULT_FAILURE_MESSAGE, failure_message, is_content_valid, validate_content
+
+# ---------------------------------------------------------------- valid pages
+
+GREENHOUSE_JOB = """Title: Job Application for Backend Engineer at Acme
+URL Source: https://boards.greenhouse.io/acme/jobs/4012345
+Markdown Content:
+# Backend Engineer
+Tel Aviv, Israel
+
+## About the role
+We are looking for a Backend Engineer to join our platform team. You will design and
+build scalable services in Python.
+
+## Requirements
+- 3+ years of experience with Python
+- Experience with PostgreSQL and cloud infrastructure
+- Strong communication skills
+
+## Benefits
+Hybrid work, learning budget.
+
+This site is protected by reCAPTCHA and the Google Privacy Policy and Terms of Service apply.
+We use cookies to improve your experience. Cookie settings.
+"""
+
+HEBREW_JOB = """Title: מפתח/ת Full Stack - דרושים
+Markdown Content:
+## תיאור המשרה
+חברת הייטק מובילה בתל אביב מחפשת מפתח/ת Full Stack לצוות המוצר.
+התפקיד כולל פיתוח צד שרת וצד לקוח, עבודה מול צוותי מוצר ועיצוב.
+
+## דרישות
+- ניסיון של שנתיים לפחות בפיתוח Python / Node.js
+- ניסיון עם React
+- היכרות עם מסדי נתונים - יתרון
+היקף משרה: משרה מלאה. התחברות לאזור האישי | אנו משתמשים בעוגיות
+"""
+
+LINKEDIN_GUEST_JOB = """Title: Acme hiring Data Engineer in Tel Aviv-Yafo | LinkedIn
+URL Source: https://www.linkedin.com/jobs/view/3912345678
+Markdown Content:
+Sign in Join now
+## Data Engineer
+Acme · Tel Aviv-Yafo · 2 weeks ago
+### About the job
+We're looking for a Data Engineer who will own our data pipelines.
+Responsibilities: build ETL with Airflow and Spark; work with analysts.
+Qualifications: 4+ years of experience, strong SQL skills.
+Seniority level: Mid-Senior level. Employment type: Full-time.
+Sign in to create job alert. LinkedIn uses cookies. Accept / Reject.
+"""
+
+SECURITY_JOB_WITH_ERROR_WORDS = """Title: Security Engineer
+Markdown Content:
+## About the role
+You will investigate access denied events and 403 forbidden responses across our APIs,
+and harden our page not found handling.
+## Requirements
+- 5 years of experience in application security
+- Strong skills in threat modeling
+## Responsibilities
+Own incident response.
+"""
+
+JOB_WITH_404_IN_TITLE = """Title: Senior QA Engineer - Req 40412
+Markdown Content:
+We are looking for a Senior QA Engineer. Requirements: 4 years of experience in test
+automation, strong skills in Python and Playwright. You will own our regression suite.
+"""
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        GREENHOUSE_JOB,
+        HEBREW_JOB,
+        LINKEDIN_GUEST_JOB,
+        SECURITY_JOB_WITH_ERROR_WORDS,
+        JOB_WITH_404_IN_TITLE,
+    ],
+    ids=["greenhouse_recaptcha_footer", "hebrew", "linkedin_guest", "security_terms", "req_404"],
+)
+def test_real_job_pages_are_valid(text):
+    assert validate_content(text) == (True, "ok")
+
+
+def test_greenhouse_recaptcha_footer_is_not_rejected():
+    """באג: הבדיקה הישנה פסלה כל דף עם המילה captcha - כולל כל משרה ב-Greenhouse."""
+    assert is_content_valid(GREENHOUSE_JOB)
+
+
+# -------------------------------------------------------------- invalid pages
+
+LINKEDIN_AUTHWALL = """Title: Sign Up | LinkedIn
+URL Source: https://www.linkedin.com/authwall?trk=...
+Markdown Content:
+Make the most of your professional life
+Email or phone, Password (6+ characters). By clicking Agree & Join, you agree to the
+LinkedIn User Agreement, Privacy Policy, and Cookie Policy. Agree & Join.
+Already on LinkedIn? Sign in. Looking to create a page for a business? Get help.
+"""
+
+GENERIC_LOGIN = """Title: Welcome back
+Markdown Content:
+Log in to your account to continue.
+Email address
+Password
+Remember me on this device. Forgot password? Don't have an account yet? Create one in
+less than a minute and get access to all of our tools and saved searches.
+"""
+
+COOKIE_WALL = """Title: Careers
+Markdown Content:
+We value your privacy. We use cookies and similar technologies to enhance your browsing
+experience, serve personalized ads or content, and analyze our traffic. By clicking
+"Accept All", you consent to our use of cookies. Customize. Reject All. Accept All.
+Cookie Policy. Powered by a consent management platform.
+"""
+
+HEBREW_UNAVAILABLE = """Title: AllJobs - לוח דרושים
+Markdown Content:
+דף הבית | חיפוש משרות | חברות | מדריכים
+המשרה אינה זמינה יותר. ייתכן שהמעסיק הסיר אותה או שהיא כבר אוישה.
+משרות דומות שעשויות לעניין אותך: מפתח Backend, מפתח Full Stack, מהנדס DevOps.
+"""
+
+LINKEDIN_CLOSED = LINKEDIN_GUEST_JOB.replace(
+    "Acme · Tel Aviv-Yafo · 2 weeks ago", "No longer accepting applications"
+)
+
+GREENHOUSE_CLOSED = """Title: Acme
+Markdown Content:
+Sorry, but the job you are looking for is no longer open. You can view all open
+positions at Acme on our careers page, and sign up for job alerts to hear about new
+roles that match your interests and experience.
+"""
+
+CLOUDFLARE = """Title: Just a moment...
+URL Source: https://jobs.example.com/123
+Markdown Content:
+jobs.example.com
+Checking your browser before accessing jobs.example.com. This process is automatic.
+Your browser will redirect to your requested content shortly. Please allow up to 5 seconds.
+"""
+
+JINA_404 = """Title: Not Found
+URL Source: https://jobs.lever.co/acme/abc
+Warning: Target URL returned error 404: Not Found
+Markdown Content:
+Sorry, we couldn't find anything here. The job posting you're looking for might have
+closed, or it might have been removed. Please check the URL or browse our other roles.
+"""
+
+ERROR_PAGE = """Title: Acme Careers
+Markdown Content:
+Home | About | Careers | Contact
+Page not found. The page you requested could not be found. It may have been moved or
+deleted. Please return to the homepage and try again, or contact our support team.
+"""
+
+CAPTCHA_PAGE = """Title: Security check
+Markdown Content:
+Please complete the CAPTCHA below so we know you're a person and not an automated
+program. This helps us keep the site safe for everyone. Having trouble? Refresh the
+page or try again later from a different network connection.
+"""
+
+COMPANY_HOMEPAGE = """Title: Acme - Home
+Markdown Content:
+Acme builds tools for modern teams. Our platform helps thousands of companies around
+the world collaborate, share documents and move faster. Read our blog, meet our
+customers, and see our pricing plans for startups and enterprises.
+"""
+
+
+@pytest.mark.parametrize(
+    "text, reason",
+    [
+        (LINKEDIN_AUTHWALL, "bad_title"),
+        (GENERIC_LOGIN, "login_wall"),
+        (COOKIE_WALL, "cookie_wall"),
+        (HEBREW_UNAVAILABLE, "job_unavailable"),
+        (LINKEDIN_CLOSED, "job_unavailable"),
+        (GREENHOUSE_CLOSED, "job_unavailable"),
+        (CLOUDFLARE, "blocked"),
+        (JINA_404, "http_error_404"),
+        (ERROR_PAGE, "error_page"),
+        (CAPTCHA_PAGE, "captcha"),
+        (COMPANY_HOMEPAGE, "no_job_content"),
+        ("Short text", "too_short"),
+        ("", "empty"),
+        (None, "empty"),
+    ],
+    ids=[
+        "linkedin_authwall",
+        "login",
+        "cookies",
+        "hebrew_unavailable",
+        "linkedin_closed",
+        "greenhouse_closed",
+        "cloudflare",
+        "jina_404",
+        "error_page",
+        "captcha",
+        "homepage",
+        "short",
+        "empty",
+        "none",
+    ],
+)
+def test_non_job_pages_are_rejected(text, reason):
+    """באג: דפי התחברות / cookies / 'המשרה אינה זמינה' עברו את הבדיקה הישנה."""
+    assert validate_content(text) == (False, reason)
+
+
+def test_html_title_is_checked_for_playwright_content():
+    html = "<html><head><title>Login | Acme</title></head><body>" + "x " * 200 + "</body></html>"
+    assert validate_content(html) == (False, "bad_title")
+
+
+# ------------------------------------------------------------ user messages
+
+
+def test_failure_message_prefers_most_informative_reason():
+    # Jina ראה דף התחברות, Playwright ראה דף בלי תוכן -> מדווחים על ההתחברות
+    assert "התחברות" in failure_message(["login_wall", "no_job_content"])
+    assert "סגורה" in failure_message(["too_short", "job_unavailable"])
+    assert "הוסרה" in failure_message(["http_error_404"])  # 404/410 = המשרה לא קיימת
+    assert "500" in failure_message(["http_error_500"])  # שגיאת שרת - לא אומרת שהמשרה הוסרה
+    assert failure_message([None, "too_short"]) == DEFAULT_FAILURE_MESSAGE
+    assert "להדביק" in DEFAULT_FAILURE_MESSAGE  # ההודעה אומרת למשתמש מה לעשות
+
+
+def test_job_removed_beats_captcha_from_another_attempt():
+    """באג (Drushim): Jina קיבל 410 והמשרה נמחקה, אבל ההודעה הייתה 'האתר דורש CAPTCHA'."""
+    msg = failure_message(["http_error_410", "captcha"])
+    assert "הוסרה" in msg and "CAPTCHA" not in msg
+    # LinkedIn: Jina 404 + Playwright דף שגיאה
+    assert "הוסרה" in failure_message(["jina_selector_miss", "http_error_404", "error_page"])
+
+
+def test_not_found_title_is_reported_as_removed_not_login():
+    """באג (Arm): כותרת 'Page not found' דווחה כ'הסורק הגיע לדף התחברות או שגיאה'."""
+    text = "Title: Page not found | Arm Jobs & Careers\n\n" + "Explore careers at Arm. " * 40
+    assert validate_content(text) == (False, "not_found")
+    assert "הוסרה" in failure_message(["not_found", "not_found"])
+    # כותרת התחברות עדיין bad_title
+    assert validate_content("Title: Sign in | Acme\n\n" + "x " * 200) == (False, "bad_title")
+
+
+# ------------------------------------------------- redirects (real cases from data/links.txt)
+
+from scraper_service.utils import redirected_away
+
+_BODY = """Markdown Content:
+We are looking for a Data Analyst. Requirements: 2 years of experience with SQL,
+strong analytical skills. You will build dashboards. Responsibilities include reporting.
+"""
+
+
+def _page(final_url: str) -> str:
+    return f"Title: Jobs\nURL Source: x\nFinal URL: {final_url}\n{_BODY}"
+
+
+@pytest.mark.parametrize(
+    "requested, final",
+    [
+        # Comeet: משרה שלא קיימת -> רשימת המשרות של החברה
+        (
+            "https://www.comeet.com/jobs/supercom/46.00A/no-such-job/00.000",
+            "https://www.comeet.com/jobs/supercom/46.00A",
+        ),
+        # LinkedIn: משרה ישנה -> דף חיפוש בברזיל
+        (
+            "https://www.linkedin.com/jobs/view/3500000000",
+            "https://br.linkedin.com/jobs/escale-vagas?trk=expired_jd_redirect&position=1",
+        ),
+        # Greenhouse: משרה סגורה -> לוח המשרות עם error=true
+        ("https://job-boards.greenhouse.io/gitlab/jobs/1", "https://job-boards.greenhouse.io/gitlab?error=true"),
+        # הפניה לדף הבית
+        ("https://acme.com/careers/backend-dev/123", "https://www.acme.com/"),
+    ],
+    ids=["comeet_to_board", "linkedin_expired", "greenhouse_error", "homepage"],
+)
+def test_redirect_to_listing_means_job_unavailable(requested, final):
+    """באג: משרה שהוסרה הפנתה לרשימת משרות / דף חיפוש, והדף עבר כ'תקין' (כי יש בו מילים של משרות)."""
+    assert redirected_away(requested, final)
+    assert validate_content(_page(final), requested) == (False, "job_unavailable")
+
+
+@pytest.mark.parametrize(
+    "requested, final",
+    [
+        # resolver של HireMeTech: אתר אחר לגמרי
+        ("https://hiremetech.com/jobs/1", "https://www.comeet.com/jobs/acme/46.00A/role/12.345"),
+        # שינוי slug באותו אתר
+        ("https://www.comeet.com/jobs/acme/46.00A/old-name/12.345", "https://www.comeet.com/jobs/acme/46.00A/new-name/12.345"),
+        # רק '?' / '/' בסוף
+        ("https://amat.wd1.myworkdayjobs.com/External/job/R123?", "https://amat.wd1.myworkdayjobs.com/External/job/R123"),
+        ("https://jobs.lever.co/acme/abc/", "https://jobs.lever.co/acme/abc"),
+    ],
+    ids=["cross_site", "slug_change", "trailing_qmark", "trailing_slash"],
+)
+def test_legit_redirects_are_kept(requested, final):
+    assert not redirected_away(requested, final)
+    assert validate_content(_page(final), requested) == (True, "ok")
+
+
+def test_final_url_without_requested_url_is_ignored():
+    assert validate_content(_page("https://www.comeet.com/jobs/supercom/46.00A")) == (True, "ok")
+
+
+# ------------------------------------------------- transient vs definitive failures
+
+import pytest as _pytest
+
+from scraper_service.utils import is_transient_failure
+
+
+@_pytest.mark.parametrize(
+    "reasons, transient",
+    [
+        (["jina_error: ReadTimeout"], True),  # באג: סומן NO_DATA סופי
+        (["jina_selector_miss", "jina_error: ConnectionError", "fetch_failed"], True),
+        (["jina_http_503"], True),
+        (["jina_http_429", "no_time_left"], True),
+        (["api_error: Timeout"], True),
+        (["jina_error: ReadTimeout", "job_unavailable"], False),  # תשובה אמיתית מאחד הניסיונות
+        (["http_error_410", "captcha"], False),
+        (["no_job_content"], False),
+        (["jina_selector_miss", "http_error_404"], False),
+    ],
+)
+def test_transient_failures_are_told_apart_from_answers(reasons, transient):
+    assert is_transient_failure(reasons) is transient
+
+
+# --- האתר אומר שאין לו תיאור למשרה (באג E2E: ציון על סמך הכותרת בלבד) ---
+
+# הדף הציבורי של HireMeTech למשרה בלי תיאור, כפי ש-Jina החזיר אותו (מקוצר)
+_HMT_NO_DESCRIPTION = """Title: Part-Time Research Scientist PhD Intern, 2027 (שם החברה מוסתר בדף הציבורי של HireMeTech)
+
+URL Source: https://hiremetech.com/job/143575413
+
+Markdown Content:
+[בית](https://hiremetech.com/he-il/v2)[משרות](https://hiremetech.com/he-il/jobs-app)
+תל אביב מהמשרד
+
+🚆 Tel Aviv-HaShalom
+
+### פרטי המשרה
+
+סטודנט / מתמחה רמת המשרה
+
+פורסמה ב-17 באוג׳ 2026
+
+### תיאור המשרה אינו זמין
+
+אין תיאור מפורט זמין למשרה זו.
+
+[צפה באתר החברה](https://hiremetech.com/job/143575413)
+
+### סקירת משרה
+
+חברה: התחברו לראות את פרטי החברה. גודל החברה: לא זמין. סוג: משרה מלאה
+"""
+
+
+def test_page_without_a_description_is_not_sent_to_the_ai():
+    assert validate_content(_HMT_NO_DESCRIPTION) == (False, "no_description")
+    assert not is_transient_failure(["no_description"])
+    assert "אין תיאור" in failure_message(["jina_error: ReadTimeout", "no_description"])
+
+
+def test_real_description_mentioning_the_phrase_is_kept():
+    text = (
+        "Title: Data Analyst\n\nMarkdown Content:\nWe are looking for a Data Analyst. Requirements: 2+ years of "
+        "experience with SQL and Python. Responsibilities: build dashboards. Skills: Tableau.\n"
+        "Note: for internal roles, no description available on the intranet - ask HR.\n"
+    )
+    assert validate_content(text) == (True, "ok")
