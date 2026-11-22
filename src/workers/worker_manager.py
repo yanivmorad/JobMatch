@@ -84,6 +84,21 @@ def _touch(name: str, **fields) -> None:
     entry.update(fields)
 
 
+def ai_availability() -> dict:
+    """
+    לדשבורד: אם *כל* מודלי ה-AI בהפסקה (מכסה / 429 / מודל שהוסר) - עד מתי, ולמה.
+    paused_until=None = יש מודל זמין (או שה-worker עוד לא עלה).
+    """
+    if not ai_pool:
+        return {"paused_until": None, "reason": None}
+    limiters = [limiter for _, limiter in ai_pool.members]
+    times = [limiter.available_at() for limiter in limiters]
+    if not all(times):
+        return {"paused_until": None, "reason": None}
+    soonest = min(range(len(times)), key=lambda i: times[i])
+    return {"paused_until": times[soonest].isoformat(), "reason": limiters[soonest].pause_reason}
+
+
 def workers_status() -> dict:
     """לכל worker: האם המשימה חיה, כמה משרות טופלו, מתי לאחרונה, שגיאה אחרונה."""
     out = {}

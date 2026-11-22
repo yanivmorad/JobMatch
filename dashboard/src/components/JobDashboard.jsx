@@ -11,10 +11,26 @@ import { isInPipeline, isProcessing } from '../constants/jobStatus';
 
 const QUEUE_POLL_MS = 5000;
 
+// משרות שממתינות לניתוח בזמן שמכסת ה-AI נגמרה: בלי ההסבר הזה הן נראות "תקועות"
+const AiQuotaBanner = ({ pausedUntil, waiting }) => {
+  if (!pausedUntil || waiting === 0) return null;
+  const until = new Date(pausedUntil).toLocaleString('he-IL', {
+    weekday: 'short', hour: '2-digit', minute: '2-digit',
+  });
+  return (
+    <div className="w-full bg-amber-50 border-b border-amber-200 text-amber-900 text-sm font-medium px-6 py-3 text-center" dir="rtl">
+      ⏸️ המכסה היומית של ה-AI (Gemini, תוכנית חינמית) נוצלה. {waiting} משרות ממתינות לניתוח
+      והניתוח ימשיך אוטומטית ב-{until}. שום משרה לא אבדה.
+    </div>
+  );
+};
+
 const JobDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [jobs, setJobs] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  // כל מודלי ה-AI בהפסקה (המכסה היומית החינמית של Gemini נוצלה) - עד מתי
+  const [aiPausedUntil, setAiPausedUntil] = useState(null);
 
   // --- 1. שליפת נתונים ---
   const fetchJobs = async () => {
@@ -46,7 +62,8 @@ const JobDashboard = () => {
 
     const interval = setInterval(async () => {
       try {
-        const { version } = await taskService.getQueueSnapshot();
+        const { version, ai } = await taskService.getQueueSnapshot();
+        setAiPausedUntil(ai?.paused_until || null);
         const changed = queueVersion.current !== null && version !== queueVersion.current;
         queueVersion.current = version;
         if (changed) fetchJobs();
@@ -182,6 +199,8 @@ const JobDashboard = () => {
           setSearchQuery={setSearchQuery}
         />
       </div>
+
+      <AiQuotaBanner pausedUntil={aiPausedUntil} waiting={jobs.filter(j => j.status === 'WAITING_FOR_AI').length} />
 
       <main className="flex-1 w-full flex justify-center bg-slate-50/50">
         <div className="w-full max-w-[90%] mx-auto px-4 py-8 flex flex-col">          

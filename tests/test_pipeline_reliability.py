@@ -238,3 +238,17 @@ async def test_removed_model_is_disabled_and_the_next_model_takes_the_job(db):
     await worker_manager.analyze_next(pool)  # עובר למודל הבא
     assert (await get_job_by_url(url))["status"] == "COMPLETED"
     assert gone.calls == 1 and good.calls == 1
+
+
+def test_ai_availability_reports_only_when_every_model_is_paused(monkeypatch):
+    a, b = _limiter(), _limiter()
+    monkeypatch.setattr(worker_manager, "ai_pool", ModelPool([(_Analyzer(VALID), a), (_Analyzer(VALID), b)]))
+    assert worker_manager.ai_availability()["paused_until"] is None
+
+    a.disable_for(3600, "daily quota")
+    assert worker_manager.ai_availability()["paused_until"] is None  # b עדיין זמין
+
+    b.disable_for(600, "Gemini 429")
+    status = worker_manager.ai_availability()
+    assert status["paused_until"] == b.paused_until.isoformat()  # הראשון שמתפנה
+    assert status["reason"] == "Gemini 429"

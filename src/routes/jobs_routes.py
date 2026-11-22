@@ -27,6 +27,7 @@ from models.job_models import (
 from services.intake import duplicate_info, ingest_text, ingest_urls
 from services.link_extractor import extract_job_links, normalize_job_url
 from workers.queue_signal import notify
+from workers.worker_manager import ai_availability
 
 logger = logging.getLogger("JobMatchServer")
 router = APIRouter(tags=["jobs"])
@@ -55,8 +56,11 @@ async def get_queue_snapshot():
     """
     מצב התור בבקשה קטנה: ספירה לפי סטטוס + version. הדשבורד בודק את זה בזמן עיבוד
     ומושך את /results (כל המשרות, כולל תיאורים מלאים) רק כש-version השתנה.
+    ai.paused_until: כל מודלי ה-AI בהפסקה (למשל המכסה היומית נוצלה) - עד מתי.
     """
-    return await queue_snapshot()
+    snapshot = await queue_snapshot()
+    snapshot["ai"] = ai_availability()
+    return snapshot
 
 
 @router.post("/jobs/url")
