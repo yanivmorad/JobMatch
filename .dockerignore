@@ -8,6 +8,7 @@ results.json
 # Local / build artifacts
 .git/
 .venv/
+.claude/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -15,7 +16,10 @@ logs/
 *.log
 *.png
 
-# Not needed by the API server
-dashboard/
+# The dashboard is built inside the image (first Dockerfile stage) - not the local build
+dashboard/node_modules/
+dashboard/dist/
+
+# Not needed by the server
 tests/
 scripts/

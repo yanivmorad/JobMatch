@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 from scraper_service.resolvers import is_hiremetech
 from scraper_service.site_apis import fetch_from_site_api
-from scraper_service.utils import clean_text, validate_content
+from scraper_service.utils import clean_text, playwright_allowed, validate_content
 
 # ניסיון ייבוא שקט של Playwright
 try:
@@ -96,7 +96,7 @@ class Scraper:
             return None
 
         # 2. Fallback ל-Playwright אם Jina נכשל
-        if HAS_PLAYWRIGHT:
+        if HAS_PLAYWRIGHT and playwright_allowed():
             logger.info(f"{id_tag}Scraper: Falling back to Local Playwright")
             t0 = time.time()
             content = self._scrape_with_playwright(target_url, job_id=job_id)

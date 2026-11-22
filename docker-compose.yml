@@ -1,9 +1,10 @@
-# Local environment: Postgres + JobMatch server (API + workers).
+# Local environment: Postgres + JobMatch server (API + workers + the built dashboard).
 #
 #   cp .env.example .env      # fill in GEMINI_API_KEY / JINA_API_KEY / HIRE_ME_TECH_TOKEN
 #   docker compose up --build
+#   open http://localhost:8000
 #
-# The dashboard is not containerized: run it with `npm run dev` in dashboard/.
+# For dashboard development with hot reload: `npm run dev` in dashboard/ (talks to :8000).
 
 services:
   db:
@@ -36,8 +37,9 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # resume.txt + "Personal Context.txt" (read/write: the Profile tab edits them)
-      - ./data:/app/data
+      # resume.txt + "Personal Context.txt": seed the profile on first run
+      # (after that the profile lives in the DB and the Profile tab edits it there)
+      - ./data:/app/data:ro
       - ./logs:/app/logs
     restart: unless-stopped
 

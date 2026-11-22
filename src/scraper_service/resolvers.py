@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
+from scraper_service.utils import playwright_allowed
+
 try:
     from playwright.sync_api import sync_playwright
 
@@ -126,9 +128,9 @@ class URLResolver:
         """
         id_tag = f"[ID {job_id}] " if job_id else ""
         # כל כישלון כאן מאפשר fallback: הדף הציבורי של HireMeTech מכיל את תיאור המשרה
-        if not HAS_PLAYWRIGHT:
+        if not HAS_PLAYWRIGHT or not playwright_allowed():
             raise ResolveError(
-                "HireMeTech: Playwright לא מותקן בשרת, אי אפשר לפענח את הקישור",
+                "HireMeTech: הדפדפן (Playwright) לא זמין בשרת, אי אפשר לפענח את הקישור",
                 public_fallback=True,
             )
 

@@ -1,9 +1,18 @@
 # src/scraper_service/utils.py
+import os
 import re
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 
 MIN_LENGTH = 150
+
+
+def playwright_allowed() -> bool:
+    """
+    ENABLE_PLAYWRIGHT=false מכבה את הדפדפן (fallback של הסורק + פענוח HireMeTech).
+    לשרת עם מעט זיכרון: Chromium הגיע ל-~370MB בבדיקה, מול ~55MB לשרת במנוחה.
+    """
+    return (os.getenv("ENABLE_PLAYWRIGHT") or "true").strip().lower() not in ("0", "false", "no", "off")
 MIN_JOB_SIGNALS = 2
 
 # --- תמיד פוסל: המשרה סגורה ---
