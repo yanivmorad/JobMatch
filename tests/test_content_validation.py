@@ -1,6 +1,6 @@
 import pytest
 
-from scraper_service.utils import failure_message, is_content_valid, validate_content
+from scraper_service.utils import DEFAULT_FAILURE_MESSAGE, failure_message, is_content_valid, validate_content
 
 # ---------------------------------------------------------------- valid pages
 
@@ -230,7 +230,8 @@ def test_failure_message_prefers_most_informative_reason():
     assert "סגורה" in failure_message(["too_short", "job_unavailable"])
     assert "הוסרה" in failure_message(["http_error_404"])  # 404/410 = המשרה לא קיימת
     assert "500" in failure_message(["http_error_500"])  # שגיאת שרת - לא אומרת שהמשרה הוסרה
-    assert failure_message([None, "too_short"]) == "הסורק לא הצליח לחלץ תיאור משרה"
+    assert failure_message([None, "too_short"]) == DEFAULT_FAILURE_MESSAGE
+    assert "להדביק" in DEFAULT_FAILURE_MESSAGE  # ההודעה אומרת למשתמש מה לעשות
 
 
 def test_job_removed_beats_captcha_from_another_attempt():
