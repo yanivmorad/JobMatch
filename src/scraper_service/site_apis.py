@@ -69,12 +69,29 @@ def _workday_api_url(url: str) -> Optional[str]:
     return f"https://{host}/wday/cxs/{tenant}/{site}/{rest}"
 
 
+def _workday_unposted(res) -> bool:
+    """
+    משרה שהוסרה מהאתר: Workday עונה 403 עם JSON משלו
+    {"errorCode": "S22", "httpStatus": 403, "message": "permission denied"}
+    (משרה שלא קיימת בכלל -> 404 S21). באג: ה-403 נחשב לתקלה, הסריקה המשיכה ל-Playwright,
+    Workday הראה לו דף התחברות, והמשתמש קיבל "האתר דורש התחברות" על משרה שנסגרה.
+    403 אחר (למשל דף חסימה של WAF ב-HTML) - לא מסיקים ממנו שהמשרה נסגרה.
+    """
+    if res.status_code != 403:
+        return False
+    try:
+        data = res.json()
+    except ValueError:
+        return False
+    return isinstance(data, dict) and data.get("httpStatus") == 403 and bool(data.get("errorCode"))
+
+
 def _workday(url: str, session) -> Optional[SiteApiResult]:
     api = _workday_api_url(url)
     if not api:
         return None
     res = session.get(api, headers=_HEADERS, timeout=TIMEOUT)
-    if res.status_code in (404, 410):
+    if res.status_code in (404, 410) or _workday_unposted(res):
         return SiteApiResult("workday_api", reason="job_unavailable", status=res.status_code)
     res.raise_for_status()
     data = res.json()

@@ -16,11 +16,14 @@ _DESC = (
 
 
 class _Resp:
-    def __init__(self, status, payload=None):
+    def __init__(self, status, payload=None, html=False):
         self.status_code = status
         self._payload = payload
+        self._html = html
 
     def json(self):
+        if self._html:  # requests זורק ValueError (JSONDecodeError) על גוף שאינו JSON
+            raise ValueError("Expecting value")
         return self._payload
 
     def raise_for_status(self):
@@ -105,6 +108,52 @@ def test_workday_posting_becomes_a_job_document():
 def test_workday_removed_job():
     r = fetch_from_site_api(_WD_URL, _Session({_WD_API: _Resp(404)}))
     assert r.reason == "job_unavailable"
+
+
+# התשובות האמיתיות של Workday (נבדקו מול amat.wd1.myworkdayjobs.com, 2026-11-22)
+_WD_UNPOSTED = {"errorCode": "S22", "errorCaseId": "F7C5BDMWS9ZP6I", "httpStatus": 403, "message": "permission denied", "messageParams": {}}
+_WD_NOT_FOUND = {"errorCode": "S21", "httpStatus": 404, "message": "not found: Job_Posting_Anchor_ID=Fake_R0000001", "messageParams": {}}
+
+
+def test_workday_unposted_job_is_closed_not_a_login_wall():
+    """באג: משרה שהוסרה (R2614690) -> 403 S22 -> נחשב לתקלה -> Playwright ראה דף התחברות ->
+    'האתר דורש התחברות'. עכשיו: המשרה סגורה."""
+    r = fetch_from_site_api(_WD_URL, _Session({_WD_API: _Resp(403, _WD_UNPOSTED)}))
+    assert r.reason == "job_unavailable" and r.status == 403
+
+
+def test_workday_missing_job_json_404():
+    assert fetch_from_site_api(_WD_URL, _Session({_WD_API: _Resp(404, _WD_NOT_FOUND)})).reason == "job_unavailable"
+
+
+@pytest.mark.parametrize(
+    "resp",
+    [
+        _Resp(403, html=True),  # דף חסימה (WAF / Cloudflare) - לא JSON
+        _Resp(403, {"error": "forbidden"}),  # JSON שאינו של Workday
+        _Resp(403, ["not", "a", "dict"]),
+        _Resp(500, {"errorCode": "S99", "httpStatus": 500}),
+    ],
+    ids=["html_403", "foreign_json_403", "list_json_403", "server_error"],
+)
+def test_workday_other_errors_fall_through_to_the_scrapers(resp):
+    """רק ה-403 של Workday עצמו אומר שהמשרה הוסרה; כל שגיאה אחרת -> ממשיכים ל-Jina / Playwright."""
+    r = fetch_from_site_api(_WD_URL, _Session({_WD_API: resp}))
+    assert r.reason.startswith("api_error")
+
+
+def test_scraper_reports_an_unposted_workday_job_as_closed(monkeypatch):
+    """מקצה לקצה בסורק: בלי Jina / HTML / Playwright, והודעה למשתמש 'המשרה סגורה'."""
+    from scraper_service.utils import failure_message
+
+    s = _scraper(_Session({_WD_API: _Resp(403, _WD_UNPOSTED)}))
+    monkeypatch.setattr(s, "_try_jina", lambda *a, **k: pytest.fail("no Jina for a closed job"))
+    monkeypatch.setattr(s, "_try_direct_html", lambda *a, **k: pytest.fail("no direct HTML for a closed job"))
+    monkeypatch.setattr(s, "_scrape_with_playwright", lambda *a, **k: pytest.fail("no Playwright for a closed job"))
+    trace = []
+    assert s.scrape(_WD_URL, trace=trace) is None
+    assert [a["reason"] for a in trace] == ["job_unavailable"]
+    assert failure_message([a["reason"] for a in trace]) == "המשרה סגורה או אינה זמינה יותר"
 
 
 def test_workday_network_error_falls_through():
