@@ -13,8 +13,9 @@
 זהו המקור היחיד לחילוץ קישורים: הדשבורד (POST /api/jobs/raw) ובהמשך הבוט משתמשים בו.
 """
 import re
+import unicodedata
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 # תווים חוקיים ב-URL לפי RFC 3986 (ASCII בלבד)
@@ -90,6 +91,83 @@ def _clean_line(line: str) -> str:
     return line.strip().rstrip("-–—|").strip()
 
 
+# --- פתיח של הודעת גיוס לפני שם המשרה ---
+# באג (ריצה אמיתית): "🔥 דרוש/ה Junior QA Automation Engineer" נשמר כשם המשרה כמו שהוא.
+# אימוג'י וסימני רשימה בתחילת / סוף השורה: So = אימוג'י וסמלים, Sk = גוון עור,
+# Cf = ZWJ ותווי כיווניות, Me / Mn = keycap ו-variation selectors (רק בתחילת השורה:
+# בסוף שורה Mn יכול להיות ניקוד עברי). "." ו-"(" לא נמחקים: ".NET Developer", "(Junior) QA".
+_LEADING_PUNCT = set("•·▪▫◦‣⁃*-–—>|:!¡#~=")
+_TRAILING_MARKS = {"\ufe0f", "\ufe0e", "\u20e3"}
+
+
+def _is_leading_decor(ch: str) -> bool:
+    return ch.isspace() or ch in _LEADING_PUNCT or unicodedata.category(ch) in ("So", "Sk", "Cf", "Me", "Mn")
+
+
+def _is_trailing_decor(ch: str) -> bool:
+    return ch.isspace() or ch in _TRAILING_MARKS or unicodedata.category(ch) in ("So", "Sk", "Cf", "Me")
+
+
+# מספור בסגנון keycap: "1️⃣ Backend" (ספרה + FE0F + 20E3 - הספרה עצמה היא לא קישוט)
+_KEYCAP = re.compile(r"^[0-9#*]️?⃣")
+
+
+def _strip_decor(line: str) -> str:
+    while True:
+        start, end = 0, len(line)
+        while start < end and _is_leading_decor(line[start]):
+            start += 1
+        while end > start and _is_trailing_decor(line[end - 1]):
+            end -= 1
+        stripped = _KEYCAP.sub("", line[start:end])
+        if stripped == line:
+            return line
+        line = stripped
+
+
+_SEP = r"[\s:\-–—!,|.]"
+# מילות גיוס בתחילת השורה (לפני שם המשרה):
+#   דרוש / דרושה / דרושים / דרושות / דרוש/ה / דרושים/ות / דרוש.ה
+#   מחפש/ת / מחפשים / מחפשות / אנחנו מחפשים/ות, מגייסים / מגייסות (ברבים בלבד: "מגייס/ת" הוא שם תפקיד)
+#   משרה חדשה / חמה / פתוחה, משרות חדשות
+#   We're hiring / We are hiring / Now hiring (גם בלי סימן), "Hiring:" / "Job alert:" (רק עם סימן:
+#   "Hiring Manager" הוא שם תפקיד)
+_RECRUIT_PREFIX = re.compile(
+    r"^(?:"
+    r"(?:אנחנו\s+)?(?:דרוש|מחפש)(?:ים|ות|ת|ה)?(?:\s*[/\\.]\s*(?:ות|ים|ה|ת))?"
+    r"|(?:אנחנו\s+)?מגייס(?:ים|ות)(?:\s*/\s*(?:ות|ים))?"
+    r"|משר(?:ה|ות)\s+(?:חדש|חמ|פתוח)(?:ה|ות)"
+    rf")(?=$|{_SEP})"
+    rf"|^(?:we['’]?re|we\s+are|now)\s+hiring(?=$|{_SEP})"
+    r"|^(?:hiring|job\s+alert|new\s+job|open\s+position)\s*(?=[:\-–—!|])",
+    re.IGNORECASE,
+)
+# "לחברת הייטק מובילה דרוש/ה QA Engineer" - שם המשרה אחרי "דרוש" באמצע השורה
+_RECRUIT_INFIX = re.compile(r"\sדרוש(?:ים|ות|ה)?(?:\s*/\s*(?:ות|ה))?\s*:?\s+(?=\S)")
+
+
+def _strip_recruit_prefix(line: str) -> Tuple[str, bool]:
+    """
+    מוריד אימוג'י ופתיחים ("🔥 דרוש/ה", "משרה חדשה!", "We're hiring:") מתחילת השורה.
+    מחזיר (השורה הנקייה, האם הורד פתיח). שורה שהייתה רק פתיח ("🔥 דרושים! 🔥") -> ("", True).
+    """
+    line = _strip_decor(line)
+    removed = False
+    for _ in range(3):  # "🔥 משרה חדשה! דרוש/ה: QA" - כמה פתיחים ברצף
+        m = _RECRUIT_PREFIX.match(line)
+        if not m:
+            break
+        line = _strip_decor(re.sub(rf"^{_SEP}+", "", line[m.end():]))
+        removed = True
+    if not removed:
+        infix = _RECRUIT_INFIX.search(line)
+        if infix:
+            rest = _strip_decor(line[infix.end():])
+            if _valid_title(rest):
+                return rest, True
+    return line, removed
+
+
 def _valid_title(line: str) -> Optional[str]:
     if not line or line.endswith(":") or _URL_RE.search(line):
         return None
@@ -103,24 +181,31 @@ def _title_from(region: str, first_line_wins: bool) -> Optional[str]:
     בוחר כותרת מתוך הטקסט שלפני הקישור:
     1. שורה עם תווית ("שם המשרה: X") - הכי אמינה.
     2. הודעה עם קישור משרה יחיד - השורה הראשונה של ההודעה (שם המשרה בדרך כלל בראש).
+       שורת פתיח בלבד ("🔥 דרושים!") או שורת קישוט בלי אותיות - מדלגים לשורה הבאה.
     3. אחרת - השורה הקרובה ביותר לפני הקישור, בדילוג על תוויות ריקות ("לינק להגשה:").
+    בכל המקרים מורידים מהכותרת אימוג'י ופתיח גיוס ("🔥 דרוש/ה Junior QA" -> "Junior QA").
     """
     lines = [_clean_line(l) for l in region.splitlines()]
     lines = [l for l in lines if l]
 
     for line in reversed(lines):
-        labeled = _TITLE_LABEL.match(line)
+        labeled = _TITLE_LABEL.match(_strip_decor(line))
         if labeled:
-            title = _valid_title(line[labeled.end():].strip())
+            value, _ = _strip_recruit_prefix(_strip_decor(line)[labeled.end():])
+            title = _valid_title(value)
             if title:
                 return title
 
     ordered = lines if first_line_wins else list(reversed(lines))
     for line in ordered:
-        title = _valid_title(line)
+        cleaned, had_prefix = _strip_recruit_prefix(line)
+        title = _valid_title(cleaned)
         if title:
             return title
         if first_line_wins:
+            decorative = not re.search(r"[^\W\d_]", line)  # "🔥🔥🔥" / "-----"
+            if (had_prefix and not cleaned) or decorative:
+                continue
             return None  # השורה הראשונה לא נראית ככותרת - לא מנחשים
     return None
 

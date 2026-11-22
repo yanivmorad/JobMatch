@@ -175,3 +175,87 @@ def test_ignored_links_get_no_title():
     text = "[22.11, 7:43] Dana: האפליקציה שלנו\nhttps://apps.apple.com/il/app/x/id1\n"
     result = extract_job_links(text)
     assert result.jobs == [] and result.titles == {}
+
+
+# --- פתיח של הודעת גיוס / אימוג'י לפני שם המשרה ---
+# באג (ריצה אמיתית, 22.11): "🔥 דרוש/ה Junior QA Automation Engineer" נשמר כשם המשרה כמו שהוא,
+# והופיע כך בדשבורד. שם המשרה מההודעה גובר על מה שה-AI מזהה, ולכן חייב להיות נקי.
+
+_LINK = "https://www.comeet.com/jobs/acme/46.00A/qa/96.47E"
+
+
+def _title_of(message: str) -> str:
+    return extract_job_links(f"[22.11, 7:43] Dana: {message}\n{_LINK}\n").titles.get(_LINK)
+
+
+@pytest.mark.parametrize(
+    "message, title",
+    [
+        ("🔥 דרוש/ה Junior QA Automation Engineer", "Junior QA Automation Engineer"),
+        ("דרוש/ה: Junior QA Automation Engineer", "Junior QA Automation Engineer"),
+        ("*דרושים/ות* מפתח/ת Full Stack", "מפתח/ת Full Stack"),
+        ("דרושה מזכירה רפואית", "מזכירה רפואית"),
+        ("דרוש.ה QA Engineer", "QA Engineer"),
+        ("🚀🚀 מחפשים/ות Data Analyst 🚀", "Data Analyst"),
+        ("אנחנו מגייסים! Backend Developer", "Backend Developer"),
+        ("📢 משרה חדשה! דרוש/ה - DevOps Engineer", "DevOps Engineer"),
+        ("משרה חמה: Product Manager", "Product Manager"),
+        ("We're hiring: Backend Engineer", "Backend Engineer"),
+        ("We’re hiring Backend Engineer", "Backend Engineer"),  # גרש טיפוגרפי של וואטסאפ
+        ("Now hiring - SRE", "SRE"),
+        ("Hiring: Data Scientist", "Data Scientist"),
+        ("Job alert: Support Engineer 💼", "Support Engineer"),
+        ("👩🏽‍💻 Frontend Developer", "Frontend Developer"),  # גוון עור + ZWJ
+        ("1️⃣ Backend Developer", "Backend Developer"),  # keycap
+        ("• Backend Developer", "Backend Developer"),
+        ("לחברת הייטק מובילה דרוש/ה QA Engineer", "QA Engineer"),
+    ],
+)
+def test_recruitment_opener_and_emoji_are_not_part_of_the_title(message, title):
+    assert _title_of(message) == title
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Hiring Manager Assistant",  # "Hiring" בלי סימן אחריו - חלק משם התפקיד
+        "מגייס/ת טכנולוגי/ת",  # מגייס/ת ביחיד הוא שם תפקיד
+        ".NET Developer",  # הנקודה בהתחלה היא חלק מהשם
+        "C# Software Developer",
+        "(Junior) QA Engineer",
+        "Junior QA - Manual",
+        "Data Analyst 2026",
+    ],
+)
+def test_real_titles_are_kept_as_is(message):
+    assert _title_of(message) == message
+
+
+def test_opener_on_its_own_line_is_skipped():
+    """'🔥 דרושים! 🔥' בשורה הראשונה ושם המשרה בשורה הבאה."""
+    assert _title_of("🔥 דרושים! 🔥\n*Backend Developer*\nלפרטים והגשה:") == "Backend Developer"
+    assert _title_of("משרה חדשה\nQA Engineer") == "QA Engineer"
+    assert _title_of("🔥🔥🔥\nQA Engineer") == "QA Engineer"  # שורת קישוט בלי אותיות
+
+
+def test_opener_alone_gives_no_title():
+    assert _title_of("🔥 דרושים! 🔥") is None
+    assert _title_of("We're hiring!") is None
+
+
+def test_opener_is_stripped_after_a_label_too():
+    text = f"📌 שם המשרה: 🔥 דרוש/ה QA Engineer\nלינק להגשה: {_LINK}\n"
+    assert extract_job_links(text).titles == {_LINK: "QA Engineer"}
+
+
+def test_first_line_that_is_not_a_title_still_gives_no_guess():
+    """שורה ראשונה עם קישור / תווית ריקה - לא מדלגים הלאה ולא מנחשים (כמו קודם)."""
+    assert _title_of("לפרטים והגשה:\nQA Engineer") is None
+
+
+def test_plain_list_titles_are_cleaned():
+    text = "🔥 דרוש/ה Backend Dev - https://a.com/jobs/1\n• QA Engineer\nhttps://b.com/jobs/2"
+    assert extract_job_links(text).titles == {
+        "https://a.com/jobs/1": "Backend Dev",
+        "https://b.com/jobs/2": "QA Engineer",
+    }
