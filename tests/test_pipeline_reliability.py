@@ -58,14 +58,14 @@ async def test_transient_failure_is_retried_with_backoff_then_fails(db):
     await add_new_job(url)
     job = await get_job_by_url(url)
 
-    assert await fail_or_retry(job["id"], "PENDING_RESOLVE", "FAILED_RESOLVE", "boom", max_attempts=3) == "PENDING_RESOLVE"
+    assert (await fail_or_retry(job["id"], "PENDING_RESOLVE", "FAILED_RESOLVE", "boom", max_attempts=3))[0] == "PENDING_RESOLVE"
     row = await get_job_by_url(url)
     assert row["retry_count"] == 1 and "ניסיון 1/3" in row["error_log"]
     assert row["not_before"] > datetime.now(timezone.utc)  # backoff
     assert await fetch_next_job("PENDING_RESOLVE", "RESOLVING") is None  # לא נלקחת לפני הזמן
 
-    assert await fail_or_retry(job["id"], "PENDING_RESOLVE", "FAILED_RESOLVE", "boom", max_attempts=3) == "PENDING_RESOLVE"
-    assert await fail_or_retry(job["id"], "PENDING_RESOLVE", "FAILED_RESOLVE", "boom", max_attempts=3) == "FAILED_RESOLVE"
+    assert (await fail_or_retry(job["id"], "PENDING_RESOLVE", "FAILED_RESOLVE", "boom", max_attempts=3))[0] == "PENDING_RESOLVE"
+    assert (await fail_or_retry(job["id"], "PENDING_RESOLVE", "FAILED_RESOLVE", "boom", max_attempts=3)) == ("FAILED_RESOLVE", None)
     row = await get_job_by_url(url)
     assert row["retry_count"] == 3 and row["error_log"] == "boom" and row["not_before"] is None
 
@@ -252,3 +252,22 @@ def test_ai_availability_reports_only_when_every_model_is_paused(monkeypatch):
     status = worker_manager.ai_availability()
     assert status["paused_until"] == b.paused_until.isoformat()  # הראשון שמתפנה
     assert status["reason"] == "Gemini 429"
+
+
+async def test_retry_wakes_the_worker_when_the_backoff_ends(db, monkeypatch):
+    """ניסיון חוזר מתוזמן מעיר את ה-worker בזמן - בלי לחכות לבדיקה התקופתית (שעה)."""
+    scheduled = []
+    monkeypatch.setattr(worker_manager, "notify_at", lambda status, when: scheduled.append((status, when)))
+    url = await _ai_job()
+    await worker_manager.analyze_next(_pool(_Analyzer(TransientAIError("Gemini HTTP 503"))))
+    row = await get_job_by_url(url)
+    assert scheduled == [("WAITING_FOR_AI", row["not_before"])]
+
+
+async def test_pending_retries_are_rescheduled_after_a_restart(db):
+    from db.jobs_repository import pending_retry_times
+
+    await add_new_job("https://jobs.example/r1")
+    job = await get_job_by_url("https://jobs.example/r1")
+    _, due = await fail_or_retry(job["id"], "PENDING_RESOLVE", "FAILED_RESOLVE", "boom", max_attempts=3)
+    assert await pending_retry_times() == {"PENDING_RESOLVE": due}

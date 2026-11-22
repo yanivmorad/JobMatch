@@ -29,6 +29,7 @@ from db.jobs_repository import (
     get_api_usage,
     increment_api_usage,
     mark_failed,
+    pending_retry_times,
     requeue_in_progress,
     requeue_job,
     reset_stuck_jobs,
@@ -43,7 +44,7 @@ from scraper_service.resolvers import (
 from scraper_service.utils import failure_message
 from services.profile_service import get_profile
 from services.link_extractor import normalize_job_url
-from workers.queue_signal import IdleWaiter, notify
+from workers.queue_signal import IdleWaiter, notify, notify_at
 from workers.rate_limiter import AIRateLimiter, ModelPool
 
 # טיפול גמיש בייבוא מנועים
@@ -113,6 +114,14 @@ def workers_status() -> dict:
     return out
 
 
+async def _retry_later(job_id: int, retry_status: str, failed_status: str, error: str) -> str:
+    """fail_or_retry + תזמון ה-worker להתעורר כשמגיע זמן הניסיון החוזר."""
+    status, not_before = await fail_or_retry(job_id, retry_status, failed_status, error, max_attempts())
+    if not_before:
+        notify_at(retry_status, not_before)
+    return status
+
+
 # --- שלב 1: פענוח קישור ---
 
 
@@ -148,8 +157,8 @@ async def resolve_next(resolver: URLResolver) -> bool:
             )
             notify("WAITING_FOR_SCRAPE")
         else:
-            await fail_or_retry(job_id, "PENDING_RESOLVE", "FAILED_RESOLVE",
-                                f"Timeout ({RESOLVE_TIMEOUT_SECONDS}s) בפענוח הקישור", max_attempts())
+            await _retry_later(job_id, "PENDING_RESOLVE", "FAILED_RESOLVE",
+                                f"Timeout ({RESOLVE_TIMEOUT_SECONDS}s) בפענוח הקישור")
     except ResolveError as e:
         if e.public_fallback:
             # HireMeTech: התיאור ציבורי - ממשיכים לסריקת הדף עצמו (בלי שם החברה),
@@ -165,7 +174,7 @@ async def resolve_next(resolver: URLResolver) -> bool:
             await mark_failed(job_id, "FAILED_RESOLVE", str(e))
     except Exception as e:
         logger.error(f"❌ [ID {job_id}] Resolver error for {original_url}: {e}")
-        await fail_or_retry(job_id, "PENDING_RESOLVE", "FAILED_RESOLVE", str(e), max_attempts())
+        await _retry_later(job_id, "PENDING_RESOLVE", "FAILED_RESOLVE", str(e))
     return True
 
 
@@ -198,11 +207,11 @@ async def scrape_next(scraper: Scraper) -> bool:
             await mark_failed(job_id, "NO_DATA", failure_message(reasons))
     except asyncio.TimeoutError:
         logger.error(f"⏲️ [ID {job_id}] Scraper timeout ({SCRAPE_TIMEOUT_SECONDS}s) for {url}")
-        await fail_or_retry(job_id, "WAITING_FOR_SCRAPE", "FAILED_SCRAPE",
-                            f"Timeout ({SCRAPE_TIMEOUT_SECONDS}s) during scraping", max_attempts())
+        await _retry_later(job_id, "WAITING_FOR_SCRAPE", "FAILED_SCRAPE",
+                            f"Timeout ({SCRAPE_TIMEOUT_SECONDS}s) during scraping")
     except Exception as e:
         logger.error(f"❌ [ID {job_id}] Scraper error for {url}: {e}")
-        await fail_or_retry(job_id, "WAITING_FOR_SCRAPE", "FAILED_SCRAPE", str(e), max_attempts())
+        await _retry_later(job_id, "WAITING_FOR_SCRAPE", "FAILED_SCRAPE", str(e))
     return True
 
 
@@ -221,8 +230,8 @@ async def analyze_next(pool: ModelPool) -> bool:
     resume = await get_profile("resume")
     context = await get_profile("context")
     if not resume:
-        await fail_or_retry(job_id, "WAITING_FOR_AI", "FAILED_ANALYSIS",
-                            "אין קורות חיים בפרופיל - הוסף אותם בלשונית הפרופיל", max_attempts())
+        await _retry_later(job_id, "WAITING_FOR_AI", "FAILED_ANALYSIS",
+                            "אין קורות חיים בפרופיל - הוסף אותם בלשונית הפרופיל")
         return True
     await limiter.record_request()
     try:
@@ -242,12 +251,12 @@ async def analyze_next(pool: ModelPool) -> bool:
         return True
     except asyncio.TimeoutError:
         logger.error(f"⏲️ [ID {job_id}] AI timeout ({AI_TIMEOUT_SECONDS}s)")
-        await fail_or_retry(job_id, "WAITING_FOR_AI", "FAILED_ANALYSIS",
-                            f"AI Timeout ({AI_TIMEOUT_SECONDS}s)", max_attempts())
+        await _retry_later(job_id, "WAITING_FOR_AI", "FAILED_ANALYSIS",
+                            f"AI Timeout ({AI_TIMEOUT_SECONDS}s)")
         return True
     except Exception as e:  # TransientAIError / InvalidAIResponse / AIError
         logger.error(f"❌ [ID {job_id}] AI error: {e}")
-        await fail_or_retry(job_id, "WAITING_FOR_AI", "FAILED_ANALYSIS", str(e), max_attempts())
+        await _retry_later(job_id, "WAITING_FOR_AI", "FAILED_ANALYSIS", str(e))
         return True
 
     limiter.on_success()
@@ -363,6 +372,10 @@ async def start_background_workers():
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)
         task.add_done_callback(_log_worker_exit)
+
+    # ניסיונות חוזרים שתוזמנו לפני ההפעלה מחדש: להעיר את ה-workers בזמן
+    for status, due in (await pending_retry_times()).items():
+        notify_at(status, due)
 
     logger.info("🚀 כל ה-Workers באוויר (Resolver, Scraper, AI, Maintenance)")
 

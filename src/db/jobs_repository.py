@@ -234,14 +234,14 @@ async def fail_or_retry(
     error_msg: str,
     max_attempts: int = 3,
     base_delay_seconds: int = 30,
-) -> str:
+):
     """
     תקלה זמנית (timeout / 5xx / רשת): retry_count++. כל עוד לא עברנו max_attempts המשרה
     חוזרת לתור עם backoff (30s, 60s, 120s...) דרך not_before; אחרת - failed_status.
-    מחזיר את הסטטוס החדש.
+    מחזיר (הסטטוס החדש, not_before) - not_before כדי לתזמן את ה-worker להתעורר בזמן.
     """
     pool = await get_pool()
-    return await pool.fetchval(
+    row = await pool.fetchrow(
         """
         UPDATE jobs SET
             retry_count = retry_count + 1,
@@ -254,7 +254,7 @@ async def fail_or_retry(
                              ELSE $4 END,
             updated_at = NOW()
         WHERE id = $1
-        RETURNING status::text
+        RETURNING status::text AS status, not_before
         """,
         job_id,
         retry_status,
@@ -263,6 +263,17 @@ async def fail_or_retry(
         max_attempts,
         base_delay_seconds,
     )
+    return (row["status"], row["not_before"]) if row else (None, None)
+
+
+async def pending_retry_times() -> dict:
+    """{סטטוס: מתי הניסיון החוזר הקרוב} - בהפעלה, כדי לתזמן את ה-workers להתעורר בזמן."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT status::text AS status, MIN(not_before) AS due FROM jobs "
+        "WHERE not_before IS NOT NULL GROUP BY status"
+    )
+    return {r["status"]: r["due"] for r in rows}
 
 
 async def increment_api_usage(day, model: str) -> int:

@@ -97,3 +97,11 @@ def test_playwright_switch(monkeypatch, value, expected):
     else:
         monkeypatch.setenv("ENABLE_PLAYWRIGHT", value)
     assert playwright_allowed() is expected
+
+
+async def test_ping_needs_no_token_and_no_db(monkeypatch):
+    monkeypatch.setenv("API_TOKEN", TOKEN)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nobody:x@127.0.0.1:1/none")  # DB לא זמין
+    async with _client() as client:
+        r = await client.get("/ping")
+    assert r.status_code == 200 and r.json() == {"ok": True}

@@ -3,6 +3,8 @@ import asyncio
 import logging
 import os
 
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
 import asyncpg
 from dotenv import load_dotenv
 
@@ -31,16 +33,45 @@ JOB_STATUSES = (
 )
 
 
+# פרמטרים במחרוזת החיבור שאינם של asyncpg: asyncpg שולח פרמטר לא מוכר לשרת כהגדרת
+# session ("unrecognized configuration parameter"). Neon מוסיף channel_binding=require כברירת מחדל.
+_UNSUPPORTED_DSN_PARAMS = {"channel_binding"}
+
+
+def _clean_dsn(dsn: str) -> str:
+    parts = urlsplit(dsn)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k not in _UNSUPPORTED_DSN_PARAMS]
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
+
+def _pool_settings(dsn_host: str) -> dict:
+    """
+    - min_size קטן: ברירת המחדל של asyncpg פותחת 10 חיבורים מראש.
+    - max_inactive_connection_lifetime: חיבור רדום נסגר אחרי דקה. Neon (חינמי) נרדם אחרי
+      5 דקות בלי פעילות וסוגר את החיבורים; חיבור ישן ב-pool היה נכשל בבקשה הבאה.
+    - pooler של Neon (PgBouncer, host עם "-pooler"): בלי מטמון prepared statements.
+    """
+    try:
+        max_size = max(1, int(os.getenv("DB_POOL_MAX") or 5))
+    except ValueError:
+        max_size = 5
+    settings = {"min_size": 1, "max_size": max_size, "max_inactive_connection_lifetime": 60}
+    if "-pooler" in (dsn_host or ""):
+        settings["statement_cache_size"] = 0
+    return settings
+
+
 def _connect_kwargs() -> dict:
     """
     DATABASE_URL (Neon / Supabase / Render) מקבל עדיפות.
     אחרת - משתני PG_* הישנים, לסביבה מקומית.
     נקרא בזמן יצירת ה-pool (ולא בזמן import) כדי שאפשר יהיה להחליף DB בבדיקות.
     """
-    dsn = os.getenv("DATABASE_URL")
+    dsn = (os.getenv("DATABASE_URL") or "").strip()
     if dsn:
-        return {"dsn": dsn}
+        return {"dsn": _clean_dsn(dsn), **_pool_settings(urlsplit(dsn).hostname)}
     return {
+        **_pool_settings(os.getenv("PG_HOST", "localhost")),
         "user": os.getenv("PG_USER"),
         "password": os.getenv("PG_PASSWORD"),
         "database": os.getenv("PG_DB"),

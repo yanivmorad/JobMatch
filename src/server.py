@@ -71,6 +71,16 @@ app.include_router(jobs_router, prefix="/api", dependencies=_auth)
 app.include_router(profile_router, prefix="/api/profile", dependencies=_auth)
 
 
+@app.get("/ping")
+async def ping():
+    """
+    בלי DB: ל-health check של Render ול-ping חיצוני ששומר את השירות ער (Render החינמי נרדם
+    אחרי 15 דקות בלי תעבורה נכנסת). /health מריץ שאילתה, ושימוש בו לבדיקות התכופות האלה
+    היה מונע מ-Neon להירדם ושורף את מכסת ה-CU-hours.
+    """
+    return {"ok": True}
+
+
 @app.get("/health")
 async def health():
     """

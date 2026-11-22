@@ -197,6 +197,11 @@ async def test_start_background_workers_schedules_maintenance(monkeypatch):
         return run
 
     monkeypatch.setattr(worker_manager, "reset_stuck_jobs", noop)
+
+    async def no_pending():
+        return {}
+
+    monkeypatch.setattr(worker_manager, "pending_retry_times", no_pending)
     for name in ("resolver_worker", "scrape_worker", "ai_worker", "maintenance_worker"):
         monkeypatch.setattr(worker_manager, name, fake_worker(name))
 
