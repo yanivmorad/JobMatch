@@ -320,17 +320,18 @@ const JobDetail = ({ job, context = 'review', onAction, onDelete, onUpdateStatus
 
       <footer className={`shrink-0 border-t border-line bg-surface flex flex-wrap items-center gap-2 ${layout === 'pane' ? 'px-9 max-xl:px-7 py-3.5' : 'px-5 max-sm:px-4 py-3 pb-[max(12px,env(safe-area-inset-bottom))] sticky bottom-0'}`}>
         {external && (
-          <Button variant="accent" href={job.url}>
-            לדף המשרה<ExternalLink size={15} aria-hidden />
+          <Button variant="accent" href={job.url} className="max-sm:px-3">
+            <span className="max-sm:hidden">לדף המשרה</span><span className="sm:hidden">למשרה</span>
+            <ExternalLink size={15} aria-hidden />
           </Button>
         )}
         {completed && pending && (
           <>
-            <Button variant="go" onClick={() => decide('applied')} disabled={Boolean(busy)}>
+            <Button variant="go" onClick={() => decide('applied')} disabled={Boolean(busy)} className="max-sm:px-3">
               {busy === 'applied' ? <Loader2 size={16} className="animate-spin" aria-hidden /> : <Send size={16} aria-hidden />}
               הגשתי
             </Button>
-            <Button variant="secondary" onClick={() => decide('not_relevant')} disabled={Boolean(busy)}>
+            <Button variant="secondary" onClick={() => decide('not_relevant')} disabled={Boolean(busy)} className="max-sm:px-3">
               לא רלוונטי
             </Button>
           </>
@@ -340,9 +341,10 @@ const JobDetail = ({ job, context = 'review', onAction, onDelete, onUpdateStatus
             <RotateCcw size={16} aria-hidden />החזרה ללוח
           </Button>
         )}
-        <span className="flex-1" />
+        <span className="flex-1 max-sm:hidden" />
         {completed && !manual && (
           <Button
+            className="max-sm:hidden"
             variant="secondary"
             size="icon"
             onClick={reanalyze}
@@ -357,7 +359,7 @@ const JobDetail = ({ job, context = 'review', onAction, onDelete, onUpdateStatus
           label="עוד פעולות"
           align="end"
           placement="up"
-          triggerClassName="h-10 w-10 max-sm:h-11 max-sm:w-11 inline-flex items-center justify-center rounded-md border border-line-strong bg-surface text-ink-2 hover:bg-hover"
+          triggerClassName="h-10 w-10 max-sm:h-11 max-sm:w-11 max-sm:ms-auto inline-flex items-center justify-center rounded-md border border-line-strong bg-surface text-ink-2 hover:bg-hover"
           trigger={<MoreHorizontal size={18} aria-hidden />}
         >
           {(close) => (

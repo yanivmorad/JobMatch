@@ -35,7 +35,7 @@ export const CloseMenu = ({ job, onUpdateStatus, label = 'סגירה', compact =
             </MenuItem>
           )}
           <MenuItem close={close} icon={Inbox} hint="ממתין לבדיקה" onSelect={() => onUpdateStatus(job.url, 'pending')}>
-            חזרה ללבדיקה
+            החזרה לבדיקה
           </MenuItem>
         </>
       )}

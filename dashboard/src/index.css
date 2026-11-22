@@ -73,22 +73,28 @@
   textarea, input {
     color: var(--ink);
   }
+  /* כותרות באנגלית בשורה של רשימה: כיווניות משלהן, אבל מיושרות לימין כמו כל הרשימה */
+  .truncate[dir="auto"] {
+    text-align: right;
+  }
   ::placeholder {
     color: var(--ink-3);
     opacity: 1;
   }
 }
 
+/* utility (לא component) כדי ש-lg:scroll-area יעבוד */
+@utility scroll-area {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
 @layer components {
   .num {
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum" 1;
-  }
-  .scroll-area {
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: var(--line-strong) transparent;
   }
   /* שינוי מצב ברענון אוטומטי: מעבר רך במקום, בלי תזוזה */
   .state-fade {

@@ -157,7 +157,7 @@ const Dashboard = () => {
         await taskService.updateJobAction(url, action);
       }
       await fetchJobs();
-      if (action === 'none') toast('המשרה חזרה ללבדיקה');
+      if (action === 'none') toast('המשרה חזרה לרשימת הבדיקה');
       if (action === 'manual_update') toast('נשמר. המשרה נשלחה לניתוח');
       return true;
     } catch (err) {

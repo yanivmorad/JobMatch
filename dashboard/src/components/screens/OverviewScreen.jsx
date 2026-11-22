@@ -104,7 +104,7 @@ const OverviewScreen = ({ jobs, activeJobs, runJobs, failedCount, onNavigate, on
                       <span dir="auto">{reason.text}</span>
                     </span>
                   </span>
-                  <VerdictBadge job={j} />
+                  <span className={verdictOf(j) === 'yes' ? '' : 'max-sm:hidden'}><VerdictBadge job={j} /></span>
                 </button>
               </li>
             );
