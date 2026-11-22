@@ -1,0 +1,98 @@
+/* JobMatch Desk — design tokens.
+   1:1 עם tokens.json במערכת העיצוב (https://claude.ai/artifact/9o6MHr4AgndASNzp2jDwsh).
+   בהיר על :root, כהה לפי הגדרת המערכת, ו-[data-theme] מאפשר לבחור ידנית לשני הכיוונים. */
+
+:root {
+  color-scheme: light;
+  --bg: #F4F3EF;
+  --surface: #FFFFFF;
+  --surface-sunken: #EEEDE8;
+  --surface-hover: #F9F8F5;
+  --line: #E3E1DA;
+  --line-strong: #8F8C84;
+  --ink: #17191C;
+  --ink-2: #4B5058;
+  --ink-3: #61656C;
+  --ink-inverse: #FFFFFF;
+  --accent: #2F45C6;
+  --accent-soft: #E8EBFA;
+  --go: #0D6B43;
+  --go-fill: #1F9D62;
+  --go-soft: #E2F2E9;
+  --warn: #8F5300;
+  --warn-fill: #BD8000;
+  --warn-soft: #FBF0D6;
+  --weak: #A8371F;
+  --weak-fill: #D9583B;
+  --weak-soft: #F9E3DC;
+  --danger: #B3261E;
+  --danger-fill: #C9302C;
+  --danger-soft: #FBE9E7;
+  --skeleton: #E6E4DE;
+  --scrim: rgba(23, 25, 28, 0.42);
+  --shadow-overlay: 0 16px 40px -12px rgba(23, 25, 28, 0.22), 0 0 0 1px rgba(23, 25, 28, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0F1012;
+    --surface: #17181B;
+    --surface-sunken: #0B0C0D;
+    --surface-hover: #1E2024;
+    --line: #2A2C31;
+    --line-strong: #6E727A;
+    --ink: #EDEDEA;
+    --ink-2: #B9BDC4;
+    --ink-3: #8E939B;
+    --ink-inverse: #0F1012;
+    --accent: #8C9CFF;
+    --accent-soft: #1E2347;
+    --go: #5FD39B;
+    --go-fill: #3DBB7E;
+    --go-soft: #12291E;
+    --warn: #F2B84B;
+    --warn-fill: #E0A92E;
+    --warn-soft: #2C2310;
+    --weak: #FF9478;
+    --weak-fill: #E8704F;
+    --weak-soft: #2E1A15;
+    --danger: #FF8A80;
+    --danger-fill: #E5534B;
+    --danger-soft: #33191A;
+    --skeleton: #24262B;
+    --scrim: rgba(0, 0, 0, 0.6);
+    --shadow-overlay: 0 16px 40px -12px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0F1012;
+  --surface: #17181B;
+  --surface-sunken: #0B0C0D;
+  --surface-hover: #1E2024;
+  --line: #2A2C31;
+  --line-strong: #6E727A;
+  --ink: #EDEDEA;
+  --ink-2: #B9BDC4;
+  --ink-3: #8E939B;
+  --ink-inverse: #0F1012;
+  --accent: #8C9CFF;
+  --accent-soft: #1E2347;
+  --go: #5FD39B;
+  --go-fill: #3DBB7E;
+  --go-soft: #12291E;
+  --warn: #F2B84B;
+  --warn-fill: #E0A92E;
+  --warn-soft: #2C2310;
+  --weak: #FF9478;
+  --weak-fill: #E8704F;
+  --weak-soft: #2E1A15;
+  --danger: #FF8A80;
+  --danger-fill: #E5534B;
+  --danger-soft: #33191A;
+  --skeleton: #24262B;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --shadow-overlay: 0 16px 40px -12px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
