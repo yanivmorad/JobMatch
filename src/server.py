@@ -10,8 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 # הוספת תיקיית src לנתיב
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# מייבאים רק את מה שקיים אצלך בוודאות
 from routes.jobs_routes import router as jobs_router
+from routes.profile_routes import router as profile_router
 from workers.worker_manager import start_background_workers
 
 logging.basicConfig(
@@ -37,8 +37,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# חיבור הראוטר של המשרות בלבד
 app.include_router(jobs_router, prefix="/api")
+app.include_router(profile_router, prefix="/api/profile")
 
 if __name__ == "__main__":
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)

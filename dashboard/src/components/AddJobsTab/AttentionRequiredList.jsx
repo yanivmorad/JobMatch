@@ -91,6 +91,7 @@ const AttentionRequiredList = ({
                     <div className="flex items-center justify-between">
                       <span className={`${isDuplicate ? 'text-amber-600' : 'text-rose-600'} text-[10px] font-black uppercase tracking-widest`}>
                         {isDuplicate ? 'משרה כפולה (כבר קיימת במערכת)' : 
+                         job.status === 'FAILED_RESOLVE' ? 'נכשל בפענוח הקישור' : 
                          job.status === 'FAILED_SCRAPE' ? 'נכשל בסריקה' : 
                          job.status === 'FAILED_ANALYSIS' ? 'נכשל בניתוח AI' : 
                          'אין מידע'}

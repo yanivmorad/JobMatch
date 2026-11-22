@@ -1,6 +1,7 @@
 import logging
+import os
 
-from services.file_utils import CONTEXT_PATH, RESUME_PATH, read_text_file
+from services.file_utils import CONTEXT_PATH, DATA_DIR, RESUME_PATH, read_text_file
 
 logger = logging.getLogger("JobMatchServer")
 
@@ -11,6 +12,7 @@ def get_resume_content() -> str:
 
 def update_resume_content(content: str):
     try:
+        os.makedirs(DATA_DIR, exist_ok=True)
         with open(RESUME_PATH, "w", encoding="utf-8") as f:
             f.write(content)
         logger.info(f"✅ Resume updated: {len(content)} characters")
@@ -25,6 +27,7 @@ def get_context_content() -> str:
 
 def update_context_content(content: str):
     try:
+        os.makedirs(DATA_DIR, exist_ok=True)
         with open(CONTEXT_PATH, "w", encoding="utf-8") as f:
             f.write(content)
         logger.info(f"✅ Context updated: {len(content)} characters")

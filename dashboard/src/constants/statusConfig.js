@@ -18,5 +18,18 @@ export const STATUS_CONFIG = {
   ghosted: { label: "ללא מענה", color: "#856404", bg: "#fff3cd", border: "#ffeeba", description: "לא חזרו אלי מעל חודש", icon: Ghost }
 };
 
+// --- סטטוסים של צינור העיבוד (עמודת status בשרת) ---
+// משרות שעדיין בעיבוד אוטומטי
+export const PROCESSING_STATUSES = [
+  'NEW', 'PENDING_RESOLVE', 'RESOLVING', 'WAITING_FOR_SCRAPE',
+  'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING'
+];
+// משרות שנכשלו באחד השלבים
+export const FAILED_STATUSES = ['FAILED_RESOLVE', 'FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA'];
+// משרות שדורשות טיפול של המשתמש (כישלון או כפילות)
+export const NEEDS_ATTENTION_STATUSES = [...FAILED_STATUSES, 'DUPLICATE'];
+// כל מה שעדיין לא הגיע ל-COMPLETED
+export const PIPELINE_STATUSES = [...PROCESSING_STATUSES, ...NEEDS_ATTENTION_STATUSES];
+
 export const getStatusLabel = (status) => STATUS_CONFIG[status]?.label || status;
 export const getStatusColor = (status) => STATUS_CONFIG[status]?.color || "#6c757d";

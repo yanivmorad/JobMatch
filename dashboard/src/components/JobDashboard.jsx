@@ -7,11 +7,11 @@ import AppliedJobsTab from './AppliedJobsTab/AppliedJobsTab';
 import ProfileTab from './ProfileTab';
 import OverviewTab from './OverviewTab';
 import { taskService } from '../services/taskService';
+import { PIPELINE_STATUSES, PROCESSING_STATUSES } from '../constants/statusConfig';
 
 const JobDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [jobs, setJobs] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
   // --- 1. שליפת נתונים ---
@@ -19,21 +19,23 @@ const JobDashboard = () => {
     try {
       const data = await taskService.getJobs();
       setJobs(data);
-      setLoading(false);
     } catch (err) {
       console.error("Connection Error", err);
     }
   };
 
+  // טעינה ראשונית (setState בתוך callback, לא ישירות בגוף ה-effect)
   useEffect(() => {
-    fetchJobs();
+    let cancelled = false;
+    taskService.getJobs()
+      .then(data => { if (!cancelled) setJobs(data); })
+      .catch(err => console.error("Connection Error", err));
+    return () => { cancelled = true; };
   }, []);
 
   // --- 2. Polling (רענון אוטומטי למשרות בתהליך) ---
   useEffect(() => {
-    const hasPending = jobs.some(j => 
-      ['NEW', 'PENDING_RESOLVE', 'RESOLVING', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING'].includes(j.status)
-    );
+    const hasPending = jobs.some(j => PROCESSING_STATUSES.includes(j.status));
 
     let interval = null;
     if (hasPending) {
@@ -139,9 +141,7 @@ const JobDashboard = () => {
     );
   });
 
-  const pendingJobs = filteredJobs.filter(j =>
-    ['NEW', 'PENDING_RESOLVE', 'RESOLVING', 'WAITING_FOR_SCRAPE', 'SCRAPING', 'WAITING_FOR_AI', 'ANALYZING', 'FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA', 'DUPLICATE'].includes(j.status)
-  );
+  const pendingJobs = filteredJobs.filter(j => PIPELINE_STATUSES.includes(j.status));
 
   const activeJobs = filteredJobs
     .filter(j => 

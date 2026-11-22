@@ -9,7 +9,6 @@ CURRENT_FILE_PATH = os.path.abspath(__file__)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(CURRENT_FILE_PATH)))
 
 DATA_DIR = os.path.join(BASE_DIR, "data")
-RESULTS_FILE = os.path.join(BASE_DIR, "results.json")
 RESUME_PATH = os.path.join(DATA_DIR, "resume.txt")
 CONTEXT_PATH = os.path.join(DATA_DIR, "Personal Context.txt")
 

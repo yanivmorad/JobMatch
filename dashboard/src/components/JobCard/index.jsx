@@ -9,11 +9,6 @@ const JobCard = ({ job, onAction, onDelete, onUpdateStatus, onRetry }) => {
   const currentStatus = job.application_status || 'pending';
   const statusInfo = STATUS_CONFIG[currentStatus];
 
-  const handleStatusChange = (e) => {
-    e.stopPropagation();
-    onUpdateStatus(job.url, e.target.value);
-  };
-
   // פונקציה לבחירת צבע טקסט בלבד לפי הציון
   const getScoreColorClass = (score) => {
     if (score >= 85) return 'text-emerald-600';

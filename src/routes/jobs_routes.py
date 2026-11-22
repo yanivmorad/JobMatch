@@ -1,20 +1,22 @@
 # src/routes/jobs_routes.py
 import logging
+import uuid
 
 from fastapi import APIRouter, Body, HTTPException
 
 from db.jobs_repository import (
     ApplicationStatus,
     add_new_job,
+    clear_archived_jobs,
     delete_job_by_url,
     get_all_jobs,
     get_job_by_url,
     manual_update_job_content,
+    retry_job,
     update_application_status,
     update_manual_job,
+    update_user_action,
 )
-
-# IMPORT REPOSITORY INSTEAD OF JSON_DB
 from models.job_models import (
     ActionRequest,
     ApplicationStatusUpdateRequest,
@@ -96,16 +98,22 @@ async def add_url_jobs(submission: JobSubmission):
 @router.post("/jobs/text")
 async def add_text_job(submission: TextSubmission):
     """Intake ידני: מדלג ישר ל-AI"""
-    fake_url = f"manual-{submission.company}-{submission.title}".replace(" ", "-")
+    if not submission.text.strip():
+        raise HTTPException(status_code=400, detail="תיאור המשרה ריק")
+
+    # מזהה ייחודי לכל משרה ידנית, כדי ששתי משרות עם אותו שם לא ידרסו/ידלגו זו על זו
+    fake_url = f"manual-{uuid.uuid4().hex[:12]}"
     manual_meta = {"title": submission.title, "company": submission.company}
 
-    await add_new_job(
+    added = await add_new_job(
         url=fake_url,
         source="manual",
         manual_text=submission.text,
         manual_meta=manual_meta,
     )
-    return {"message": "Manual job added to AI queue"}
+    if not added:
+        raise HTTPException(status_code=500, detail="שמירת המשרה נכשלה")
+    return {"message": "Manual job added to AI queue", "url": fake_url}
 
 
 @router.delete("/jobs")
@@ -114,14 +122,9 @@ async def delete_job(url: str):
     return {"message": "Job deleted"}
 
 
-# בתוך src/routes/jobs_routes.py
-
-
 @router.post("/jobs/action")
 async def update_action(req: ActionRequest):
     """המשתמש סימן: הוגש / התעלם / ארכב / שחזר"""
-    from db.jobs_repository import update_user_action  # וודא ייבוא
-
     logger.info(f"🔄 Updating action for: {req.url} to {req.action}")
     await update_user_action(req.url, req.action)
 
@@ -131,8 +134,6 @@ async def update_action(req: ActionRequest):
 @router.delete("/history")
 async def clear_history():
     """מחיקת כל המשרות שבארכיון"""
-    from db.jobs_repository import clear_archived_jobs
-
     await clear_archived_jobs()
     return {"message": "History cleared from SQL"}
 
@@ -147,11 +148,11 @@ async def manual_update(req: ManualUpdate):
 
 @router.post("/jobs/retry")
 async def retry_endpoint(url: str):
-    """ניסיון סריקה מחדש"""
-    from db.jobs_repository import retry_job
-
-    await retry_job(url)
-    return {"message": "Job queued for retry"}
+    """ניסיון חוזר - המשרה חוזרת לשלב שבו נכשלה"""
+    new_status = await retry_job(url)
+    if new_status is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"message": "Job queued for retry", "status": new_status}
 
 
 @router.post("/jobs/application-status")
@@ -162,16 +163,17 @@ async def update_job_status(req: ApplicationStatusUpdateRequest):
     )
     try:
         status_enum = ApplicationStatus(req.status)
-        await update_application_status(req.url, status_enum, req.is_archived)
-        return {"message": "Application status updated"}
     except ValueError:
-        return {"error": "Invalid status value"}, 400
+        raise HTTPException(status_code=400, detail="Invalid status value")
+    await update_application_status(req.url, status_enum, req.is_archived)
+    return {"message": "Application status updated"}
 
 
 @router.post("/jobs/{job_id}/manual-content")
 async def update_job_manually(job_id: int, content: str = Body(..., embed=True)):
-    try:
-        await manual_update_job_content(job_id, content)
-        return {"status": "success", "message": "Job moved to AI analysis"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="התוכן ריק")
+    updated = await manual_update_job_content(job_id, content)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"status": "success", "message": "Job moved to AI analysis"}

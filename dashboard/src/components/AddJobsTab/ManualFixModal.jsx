@@ -1,18 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Sparkles, ExternalLink, X, Loader2, CheckCircle } from 'lucide-react';
 
-const ManualFixModal = ({ isOpen, onClose, job, onSubmit, isSubmitting }) => {
-  const [content, setContent] = useState('');
-  const [title, setTitle] = useState('');
+// שם החברה מוצג רק אם הוא שם אמיתי (לא placeholder ולא ה-URL עצמו)
+const initialTitle = (job) =>
+  job.company && job.company !== 'Unknown' && job.company !== job.url ? job.company : '';
 
-  useEffect(() => {
-    if (isOpen && job) {
-      setTitle(job.company !== 'Unknown' ? job.company : '');
-      setContent('');
-    }
-  }, [isOpen, job]);
-
+// המודל נבנה מחדש (key) בכל פתיחה למשרה אחרת, כך שה-state מתאפס בלי useEffect
+const ManualFixModal = ({ isOpen, job, ...props }) => {
   if (!isOpen || !job) return null;
+  return <ManualFixModalContent key={job.id} job={job} {...props} />;
+};
+
+const ManualFixModalContent = ({ onClose, job, onSubmit, isSubmitting }) => {
+  const [content, setContent] = useState('');
+  const [title, setTitle] = useState(() => initialTitle(job));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">

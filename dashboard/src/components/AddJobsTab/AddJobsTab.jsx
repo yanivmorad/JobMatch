@@ -5,6 +5,7 @@ import SmartImportCard from './SmartImportCard';
 import ManualInputCard from './ManualInputCard';
 import AttentionRequiredList from './AttentionRequiredList';
 import { Sparkles } from 'lucide-react';
+import { NEEDS_ATTENTION_STATUSES } from '../../constants/statusConfig';
 
 const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
   const [rawInput, setRawInput] = useState('');
@@ -28,8 +29,8 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
 
   const { activeQueue, failedJobs } = useMemo(() => {
     return {
-      activeQueue: pendingJobs.filter(j => !['FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA', 'DUPLICATE'].includes(j.status)),
-      failedJobs: pendingJobs.filter(j => ['FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA', 'DUPLICATE'].includes(j.status))
+      activeQueue: pendingJobs.filter(j => !NEEDS_ATTENTION_STATUSES.includes(j.status)),
+      failedJobs: pendingJobs.filter(j => NEEDS_ATTENTION_STATUSES.includes(j.status))
     };
   }, [pendingJobs]);
 
@@ -81,7 +82,7 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
               textInput={textInput}
               setTextInput={setTextInput}
               submitStatus={submitStatus}
-              onSubmit={(text, title) => handleTextSubmit(text, title, null, false, () => {
+              onSubmit={(text, title) => handleTextSubmit(text, title, null, () => {
                 setTextInput('');
                 setTextTitle('');
               })}

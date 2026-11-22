@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { taskService } from '../services/taskService';
 
 export const useJobActions = (onJobAdded) => {
@@ -64,7 +64,7 @@ export const useJobActions = (onJobAdded) => {
     return result;
   };
 
-  const handleTextSubmit = async (text, title, originalUrl = null, isFixModal = false, callback) => {
+  const handleTextSubmit = async (text, title, originalUrl = null, callback) => {
     return handleActionWrapper(async () => {
       await taskService.addManualJob(text, title, originalUrl);
       if (callback) callback();

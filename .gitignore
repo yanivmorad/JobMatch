@@ -19,3 +19,6 @@ data/
 # IDE
 .vscode/
 .idea/
+
+# Resolver debug screenshots
+debug_*.png

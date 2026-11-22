@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from db.jobs_repository import (
+    auto_archive_old_applications,
     fetch_next_job,
     finish_analysis,
     finish_scrape,
@@ -22,6 +23,24 @@ except ImportError:
     from src.scraper_service.scraper import Scraper
 
 logger = logging.getLogger("Workers")
+
+# שמירת רפרנס למשימות הרקע - אחרת ה-Garbage Collector עלול לאסוף אותן
+_background_tasks: set = set()
+
+
+async def _supervise(name: str, worker_fn):
+    """
+    מריץ Worker ומפעיל אותו מחדש אם הוא קורס משגיאה לא צפויה
+    (למשל ניתוק זמני מה-DB), במקום שימות בשקט.
+    """
+    while True:
+        try:
+            await worker_fn()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception(f"💥 {name} worker crashed: {e}. Restarting in 10s")
+            await asyncio.sleep(10)
 
 
 async def resolver_worker():
@@ -101,10 +120,11 @@ async def scrape_worker():
                 )
 
                 if result and result.get("full_description"):
+                    # הסורק בדרך כלל לא מזהה חברה/תפקיד (None) - ה-AI יחלץ אותם
                     await finish_scrape(
                         job_id,
-                        result.get("company", "Unknown"),
-                        result.get("job_title", "Unknown"),
+                        result.get("company"),
+                        result.get("job_title"),
                         result.get("full_description", ""),
                     )
                     logger.info(
@@ -170,6 +190,22 @@ async def ai_worker():
             await asyncio.sleep(5)
 
 
+async def maintenance_worker():
+    """
+    משימות תחזוקה תקופתיות (פעם בשעה):
+    סימון "ללא מענה" למועמדויות שלא קיבלו תגובה מעל 30 יום.
+    """
+    logger.info("🧹 Maintenance Worker started")
+    while True:
+        try:
+            count = await auto_archive_old_applications()
+            if count:
+                logger.info(f"👻 Maintenance: marked {count} applications as ghosted")
+        except Exception as e:
+            logger.error(f"❌ Maintenance error: {e}")
+        await asyncio.sleep(3600)
+
+
 async def start_background_workers():
     """
     פונקציית הניהול הראשית:
@@ -179,9 +215,16 @@ async def start_background_workers():
     logger.info("🧹 מנקה משרות תקועות ומפעיל את הצינור...")
     await reset_stuck_jobs()
 
-    # הפעלה במקביל של כל יחידות העבודה
-    asyncio.create_task(resolver_worker())
-    asyncio.create_task(scrape_worker())
-    asyncio.create_task(ai_worker())
+    # הפעלה במקביל של כל יחידות העבודה, כל אחת תחת השגחה
+    workers = {
+        "Resolver": resolver_worker,
+        "Scraper": scrape_worker,
+        "AI": ai_worker,
+        "Maintenance": maintenance_worker,
+    }
+    for name, fn in workers.items():
+        task = asyncio.create_task(_supervise(name, fn), name=f"worker-{name}")
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
-    logger.info("🚀 כל ה-Workers באוויר (Resolver, Scraper, AI)")
+    logger.info("🚀 כל ה-Workers באוויר (Resolver, Scraper, AI, Maintenance)")

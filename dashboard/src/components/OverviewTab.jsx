@@ -25,9 +25,9 @@ import {
 import JobCard from './JobCard';
 import { AppliedJobsTable } from './AppliedJobsTab/AppliedJobsTab';
 import { ActiveQueueList } from './ActiveQueueList';
+import { NEEDS_ATTENTION_STATUSES } from '../constants/statusConfig';
 
 const OverviewTab = ({ 
-  jobs, 
   activeJobs, 
   appliedJobs, 
   pendingJobs, 
@@ -49,13 +49,8 @@ const OverviewTab = ({
   const highMatchCount = activeJobs.filter(j => j.suitability_score >= 85).length;
 
   // Separation of pending jobs
-  const failedJobs = pendingJobs.filter(j => 
-    ['FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA'].includes(j.status)
-  );
-  
-  const processingJobs = pendingJobs.filter(j => 
-    !['FAILED_SCRAPE', 'FAILED_ANALYSIS', 'NO_DATA'].includes(j.status)
-  );
+  const failedJobs = pendingJobs.filter(j => NEEDS_ATTENTION_STATUSES.includes(j.status));
+  const processingJobs = pendingJobs.filter(j => !NEEDS_ATTENTION_STATUSES.includes(j.status));
 
   // Recent data subsets
   const recommendedJobs = activeJobs.slice(0, 3);

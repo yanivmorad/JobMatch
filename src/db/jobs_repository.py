@@ -52,7 +52,7 @@ async def add_new_job(
             company,
             title,
         )
-        return " 1" in result
+        return result.endswith(" 1")
 
 
 async def fetch_next_job(current_status: str, next_status: str) -> Optional[dict]:
@@ -94,14 +94,22 @@ async def update_job_after_resolution(job_id: int, new_url: str, status: str):
     )
 
 
-async def finish_scrape(job_id: int, company: str, title: str, description: str):
-    """שומר את המידע שחולץ מהאתר (Scraping) ומעביר את המשרה לתור ה-AI."""
+async def finish_scrape(
+    job_id: int, company: Optional[str], title: Optional[str], description: str
+):
+    """
+    שומר את המידע שחולץ מהאתר (Scraping) ומעביר את המשרה לתור ה-AI.
+    company/title הם אופציונליים: אם הסורק לא זיהה אותם (None) נשמר הערך הקיים,
+    ושלב ה-AI יחלץ אותם מתוך תיאור המשרה.
+    """
     pool = await get_pool()
     await pool.execute(
         """
         UPDATE jobs SET 
-            status = 'WAITING_FOR_AI', company = $2, job_title = $3, 
-            full_description = $4, scraped_at = NOW(), updated_at = NOW()
+            status = 'WAITING_FOR_AI',
+            company = COALESCE($2, company),
+            job_title = COALESCE($3, job_title),
+            full_description = $4, scraped_at = NOW(), error_log = NULL
         WHERE id = $1
         """,
         job_id,
@@ -111,14 +119,40 @@ async def finish_scrape(job_id: int, company: str, title: str, description: str)
     )
 
 
+# ערכים שמסמנים "לא ידוע" ולא צריכים לדרוס שם חברה/משרה קיים
+_UNKNOWN_VALUES = {"", "unknown", "לא זוהה", "לא צוין", "identifying...", "pending..."}
+
+
+def _clean_meta(value) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if value.lower() in _UNKNOWN_VALUES or value.startswith(("http://", "https://")):
+        return None
+    return value
+
+
 async def finish_analysis(job_id: int, result: dict):
-    """שומר את תוצאות הניתוח הסופיות של ה-LLM ומסמן את התהליך כהושלם (COMPLETED)."""
+    """
+    שומר את תוצאות הניתוח הסופיות של ה-LLM ומסמן את התהליך כהושלם (COMPLETED).
+    אם ה-AI זיהה שם חברה/משרה - הם נשמרים גם בעמודות עצמן.
+    """
     pool = await get_pool()
+    company = _clean_meta(result.get("company")) if isinstance(result, dict) else None
+    title = _clean_meta(result.get("job_title")) if isinstance(result, dict) else None
     json_result = json.dumps(result) if isinstance(result, dict) else result
     await pool.execute(
-        "UPDATE jobs SET status = 'COMPLETED', analysis_result = $2, analyzed_at = NOW() WHERE id = $1",
+        """
+        UPDATE jobs SET
+            status = 'COMPLETED', analysis_result = $2, analyzed_at = NOW(),
+            company = COALESCE($3, company), job_title = COALESCE($4, job_title),
+            error_log = NULL
+        WHERE id = $1
+        """,
         job_id,
         json_result,
+        company,
+        title,
     )
 
 
@@ -133,13 +167,13 @@ async def mark_failed(job_id: int, status: str, error_msg: str):
     )
 
 
-async def manual_update_job_content(job_id: int, manual_description: str):
+async def manual_update_job_content(job_id: int, manual_description: str) -> bool:
     """
     לוקח משרה קיימת, מזריק לה תוכן ידני ומקפיץ אותה ישר לניתוח AI.
-    מדלג על שלב ה-Resolve וה-Scrape.
+    מדלג על שלב ה-Resolve וה-Scrape. מחזיר False אם המשרה לא קיימת.
     """
     pool = await get_pool()
-    await pool.execute(
+    result = await pool.execute(
         """
         UPDATE jobs 
         SET full_description = $1, 
@@ -151,6 +185,7 @@ async def manual_update_job_content(job_id: int, manual_description: str):
         manual_description,
         job_id,
     )
+    return result.endswith(" 1")
 
 
 # --- פונקציות קריאה (API & UI) ---
@@ -172,10 +207,12 @@ async def get_all_jobs() -> List[dict]:
                 if isinstance(analysis, str):
                     try:
                         analysis = json.loads(analysis)
-                    except:
+                    except ValueError:
                         analysis = {}
                 if isinstance(analysis, dict):
-                    job.update(analysis)
+                    # עמודות ה-DB (company, url, status...) קודמות לערכי הניתוח
+                    for key, value in analysis.items():
+                        job.setdefault(key, value)
             results.append(job)
         return results
 
@@ -203,7 +240,8 @@ async def update_user_action(url: str, action: str):
     await pool.execute(
         """
         UPDATE jobs 
-        SET user_action = $1, is_archived = $2, application_status = $3
+        SET user_action = $1, is_archived = $2, application_status = $3,
+            applied_at = CASE WHEN $3 = 'applied' THEN COALESCE(applied_at, NOW()) ELSE applied_at END
         WHERE url = $4
         """,
         action,
@@ -234,7 +272,11 @@ async def update_application_status(
     await pool.execute(
         """
         UPDATE jobs 
-        SET application_status = $1, user_action = $2, is_archived = $3
+        SET application_status = $1, user_action = $2, is_archived = $3,
+            applied_at = CASE
+                WHEN $1 IN ('applied', 'phone_screen', 'interview') THEN COALESCE(applied_at, NOW())
+                ELSE applied_at
+            END
         WHERE url = $4
         """,
         status.value,
@@ -264,11 +306,29 @@ async def update_manual_job(url: str, company: str, title: str, description: str
 # --- תחזוקה, מחיקה ושיקום ---
 
 
-async def retry_job(url: str):
-    """מחזיר משרה שנכשלה לשלב הסריקה לניסיון נוסף."""
+async def retry_job(url: str) -> Optional[str]:
+    """
+    מחזיר משרה שנכשלה לשלב המתאים לניסיון נוסף:
+    - נכשלה בפענוח לינק -> חזרה לפענוח
+    - נכשלה בניתוח AI ויש כבר תיאור (או משרה ידנית) -> חזרה ישר ל-AI
+    - אחרת -> חזרה לסריקה
+    מחזיר את הסטטוס החדש, או None אם המשרה לא נמצאה.
+    """
     pool = await get_pool()
-    await pool.execute(
-        "UPDATE jobs SET status = 'WAITING_FOR_SCRAPE', error_log = NULL, is_archived = FALSE WHERE url = $1",
+    return await pool.fetchval(
+        """
+        UPDATE jobs SET
+            status = CASE
+                WHEN status = 'FAILED_RESOLVE' THEN 'PENDING_RESOLVE'::job_status
+                WHEN source = 'manual'
+                     OR (status = 'FAILED_ANALYSIS' AND COALESCE(full_description, '') <> '')
+                    THEN 'WAITING_FOR_AI'::job_status
+                ELSE 'WAITING_FOR_SCRAPE'::job_status
+            END,
+            error_log = NULL, is_archived = FALSE
+        WHERE url = $1
+        RETURNING status
+        """,
         url,
     )
 
@@ -289,11 +349,20 @@ async def reset_stuck_jobs():
 
 
 async def auto_archive_old_applications():
-    """יכולת: ניקוי אוטומטי של תהליכים ישנים שבהם המעסיק לא הגיב מעל 30 יום."""
+    """
+    יכולת: ניקוי אוטומטי של תהליכים ישנים שבהם המעסיק לא הגיב מעל 30 יום
+    (מחושב מתאריך ההגשה; למשרות ישנות בלי תאריך הגשה - מתאריך ההוספה).
+    מחזיר כמה משרות סומנו.
+    """
     pool = await get_pool()
-    await pool.execute(
-        "UPDATE jobs SET application_status = 'ghosted' WHERE application_status = 'applied' AND created_at < NOW() - INTERVAL '30 days'"
+    result = await pool.execute(
+        """
+        UPDATE jobs SET application_status = 'ghosted', is_archived = TRUE
+        WHERE application_status = 'applied'
+          AND COALESCE(applied_at, created_at) < NOW() - INTERVAL '30 days'
+        """
     )
+    return int(result.split()[-1])
 
 
 async def clear_archived_jobs():

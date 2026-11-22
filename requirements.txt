@@ -1,5 +1,15 @@
-requests
-beautifulsoup4
-google-generativeai
-python-dotenv
-tabulate
+# Web server
+fastapi>=0.110
+uvicorn>=0.29
+
+# Database (PostgreSQL)
+asyncpg>=0.29
+
+# Models / config
+pydantic>=2.0
+python-dotenv>=1.0
+
+# Scraping
+requests>=2.31
+markdownify>=0.11
+playwright>=1.40  # after install run: playwright install chromium
