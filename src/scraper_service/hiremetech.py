@@ -28,7 +28,6 @@ _HEADERS = {
 }
 # /job/147318715, /he-il/job/147318715 (וגם /jobs/ למקרה שהאתר ישנה)
 _JOB_PATH = re.compile(r"^/(?:[a-z]{2}-[a-z]{2}/)?jobs?/(\d+)/?$", re.IGNORECASE)
-MASKED_COMPANY_NOTE = "(שם החברה מוסתר בדף הציבורי של HireMeTech)"
 
 
 def is_hiremetech(url: str) -> bool:
@@ -137,7 +136,9 @@ def document(job: dict) -> str:
     work_model = loc.get("work_model") if isinstance(loc.get("work_model"), dict) else {}
     skills = job.get("skills_required") or job.get("tech_stack") or job.get("skills") or []
     fields = {
-        "Company": company_name(job) or MASKED_COMPANY_NOTE,
+        # כשהחברה מוסתרת - בלי שורה בכלל. באג (E2E): עם הערה "שם החברה מוסתר ב-HireMeTech"
+        # ה-AI כתב "HireMeTech" או את ההערה עצמה כשם החברה
+        "Company": company_name(job),
         "Level": job.get("job_level"),
         "Experience required": _experience(job),
         "Employment type": job.get("employment_type"),

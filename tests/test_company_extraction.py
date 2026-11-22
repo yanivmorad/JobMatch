@@ -99,3 +99,21 @@ async def test_unknown_company_becomes_not_specified_instead_of_the_url(db):
     row = await get_job_by_url(url)
     assert row["company"] == "לא צוין"
     assert row["job_title"] == "RPA Developer"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["HireMeTech", "hiremetech.com", "שם החברה מוסתר בדף הציבורי של HireMeTech", "(שם החברה מוסתר)"],
+)
+def test_platform_or_masked_note_is_not_a_company(value):
+    """באג (E2E): ה-AI החזיר 'HireMeTech' או את הערת ההסתרה כשם החברה."""
+    from services.job_fields import clean_field
+
+    assert clean_field(value) is None
+
+
+def test_real_companies_are_kept():
+    from services.job_fields import clean_field
+
+    for name in ("Giv Solutions", "Medatech (דרך מטריקס)", "חברת ביטוח מובילה", "Applied Materials"):
+        assert clean_field(name) == name

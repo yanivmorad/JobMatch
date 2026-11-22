@@ -275,7 +275,8 @@ def test_hiremetech_guest_api_gives_the_full_description(monkeypatch):
     assert r.job_title == "Full Stack Developer" and r.company is None
     assert session.calls == [(_HMT_API, None)]
     assert r.text.startswith("Title: Full Stack Developer\n")
-    assert "Company: (שם החברה מוסתר" in r.text
+    # בלי שורת Company: עם הערה "החברה מוסתרת ב-HireMeTech" ה-AI כתב "HireMeTech" כשם החברה
+    assert "Company:" not in r.text and "HireMeTech" not in r.text
     assert "Experience required: 1-2 years" in r.text and "Level: Junior / Entry Level" in r.text
     assert "Skills: C#, .NET Framework, SQL, React" in r.text
     # התיאור הוא טקסט רגיל עם שורות - לא לאחד אותן (markdownify היה מאחד)

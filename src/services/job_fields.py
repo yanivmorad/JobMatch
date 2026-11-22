@@ -18,7 +18,13 @@ PLACEHOLDER_VALUES = (
     "company",
     "company | hireme",
     "hireme",
+    # באג (E2E): ה-AI כתב את שם הפלטפורמה כשם החברה
+    "hiremetech",
+    "hiremetech.com",
+    "hire me tech",
 )
+# ה-AI העתיק את ההערה "(שם החברה מוסתר בדף הציבורי של HireMeTech)" כשם החברה
+_MASKED_MARKERS = ("מוסתר", "hidden by hiremetech")
 
 
 def is_placeholder(value: Optional[str]) -> bool:
@@ -26,7 +32,11 @@ def is_placeholder(value: Optional[str]) -> bool:
     if value is None:
         return True
     v = str(value).strip().lower()
-    return v in PLACEHOLDER_VALUES or v.startswith(("http://", "https://", "manual"))
+    return (
+        v in PLACEHOLDER_VALUES
+        or v.startswith(("http://", "https://", "manual"))
+        or any(m in v for m in _MASKED_MARKERS)
+    )
 
 
 def clean_field(value: Optional[str]) -> Optional[str]:

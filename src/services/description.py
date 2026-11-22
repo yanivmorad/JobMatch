@@ -26,10 +26,29 @@ _EMPTY_BULLET = re.compile(r"^\s*([*\-+•|]\s*)+$")
 _SPACES = re.compile(r"[ \t ]+")
 # באנר הסכמה ל-cookies: שורות שמתארות cookie, ושמות של cookies / פרמטרי מעקב (_clck, __ft_utm_term)
 _COOKIE_LINE = re.compile(r"cookie|עוגיות|עוגיה", re.IGNORECASE)
+# שורה ארוכה מזה היא לא באנר אלא פסקה (או כל הדף בשורה אחת, כמו ב-API של HireMeTech) -
+# מורידים ממנה רק את המשפטים על cookies. באג (E2E): משרה של 4,200 תווים בשורה אחת הסתיימה
+# ב"אתר זה משתמש ב... Cookie", כל השורה נמחקה, וה-AI קיבל רק כותרת וכישורים.
+_COOKIE_LINE_MAX = 300
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 # markdown מוסיף escape: "mzb\_referrer", "visid\_incap\_\*"
 _TRACKER_ID = re.compile(r"^(?:\\?[_*])*[A-Za-z0-9]+(?:(?:\\?[_*]|-|::)+[A-Za-z0-9]*)*$")
 # הקשר שנשמר לפני סימן המשרה הראשון / אחרי האחרון בחלון (תיאור החברה, הטבות)
 _CONTEXT_CHARS = 1500
+
+
+def _drop_cookie_text(line: str) -> str:
+    """
+    שורה שמזכירה cookies: בלי סימני משרה = באנר (גם פסקה ארוכה של Cookiebot) -> "".
+    עם תוכן משרה: שורה קצרה נשארת כמו שהיא ("We build cookie-less ad tracking. Requirements..."),
+    ומשורה ארוכה יורדים רק המשפטים שמזכירים cookies.
+    """
+    if count_job_signals(line) < 2:
+        return ""
+    if len(line) <= _COOKIE_LINE_MAX:
+        return line
+    kept = [s for s in _SENTENCE_END.split(line) if not _COOKIE_LINE.search(s)]
+    return " ".join(kept).strip()
 
 
 def _clean(text: str) -> str:
@@ -44,8 +63,12 @@ def _clean(text: str) -> str:
         if not line or _EMPTY_BULLET.match(line):
             lines.append("")
             continue
-        if _COOKIE_LINE.search(line) or ("_" in line and _TRACKER_ID.match(line)):
+        if "_" in line and _TRACKER_ID.match(line):
             continue
+        if _COOKIE_LINE.search(line):
+            line = _drop_cookie_text(line)
+            if not line:
+                continue
         key = line.lower()
         # שורה קצרה שכבר הופיעה = תפריט / כפתור שחוזר (שורות ארוכות זהות - גם הן כפילות)
         if key in seen:

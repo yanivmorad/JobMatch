@@ -50,3 +50,34 @@ def test_single_huge_line_is_cut_not_dropped():
 
 def test_empty():
     assert condense_description("", 100) == ""
+
+
+def test_whole_job_on_one_line_survives_a_cookie_sentence():
+    """באג (E2E): HireMeTech מחזיר את כל המשרה בשורה אחת שמסתיימת בהודעת Cookie -
+    השורה נמחקה, ו-Gemini קיבל רק כותרת וכישורים (ציון בלי תיאור)."""
+    one_line = (
+        "בוגר/ת מערכות מידע או מדעי המחשב ומעוניין/ת במשרת פיתוח ראשונה? לחברת Medatech המובילה "
+        "בתחום ERP Priority דרוש.ה מפתח.ת. דרישות: תואר ראשון, ניסיון של עד שנתיים, ידע ב-SQL. "
+        + "התפקיד כולל פיתוח מודלים ודוחות ועבודה מול לקוחות. " * 8
+        + "אתר זה משתמש בטכנולוגיות לאיסוף מידע, כגון קובצי Cookie, לצורכי סטטיסטיקה ופרסום. הבנתי"
+    )
+    out = condense_description(f"Title: מפתח/ת Priority\n\n{one_line}")
+    assert "Medatech" in out and "דרישות: תואר ראשון" in out
+    assert "Cookie" not in out
+
+
+def test_long_cookiebot_paragraph_without_job_content_is_still_dropped():
+    banner = (
+        "We use cookies to personalise content and ads, to provide social media features and to analyse "
+        "our traffic. We also share information about your use of our site with our social media, "
+        "advertising and analytics partners who may combine it with other information that you have "
+        "provided to them or that they have collected from your use of their services."
+    )
+    job = "Requirements: 2+ years of experience with SQL. Responsibilities: build dashboards."
+    out = condense_description(f"Title: Analyst\n\n{banner}\n\n{job}")
+    assert "social media" not in out and "Requirements: 2+ years" in out
+
+
+def test_short_job_line_mentioning_cookies_is_kept():
+    line = "Requirements: experience building cookie-less ad tracking, 3+ years of Python."
+    assert line in condense_description(f"Title: Engineer\n\n{line}")
