@@ -79,24 +79,50 @@ def _fake_playwright(browser):
     return _cm
 
 
+class _JsonResp:
+    def __init__(self, status, payload=None):
+        self.status_code = status
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class _ApiSession:
+    """ה-API של HireMeTech בלי רשת. status=500 = ה-API לא ענה (ממשיכים לדפדפן)."""
+
+    def __init__(self, status=500, job=None):
+        self.status, self.job = status, job
+        self.calls = []
+
+    def get(self, url, headers=None, timeout=None):
+        self.calls.append((url, dict(headers or {})))
+        return _JsonResp(self.status, {"job": self.job} if self.job is not None else None)
+
+
+def _resolver(token="t", **api):
+    return URLResolver(hireme_token=token, session=_ApiSession(**api))
+
+
 def test_regular_urls_pass_through():
-    r = URLResolver(hireme_token="t")
+    r = _resolver()
     assert r.resolve("https://boards.greenhouse.io/acme/jobs/1") == "https://boards.greenhouse.io/acme/jobs/1"
     # 'hiremetech.com' רק בתוך ה-query - לא קישור של HireMeTech
     assert r.resolve("https://acme.com/job?ref=hiremetech.com") == "https://acme.com/job?ref=hiremetech.com"
+    assert r.session.calls == []
 
 
 def test_missing_token_raises_instead_of_returning_hiremetech_url(monkeypatch):
     """באג: בלי טוקן הוחזר הקישור המקורי, והסורק סרק את דף ההתחברות של HireMeTech."""
     monkeypatch.delenv("HIRE_ME_TECH_TOKEN", raising=False)
     with pytest.raises(ResolveError, match="HIRE_ME_TECH_TOKEN"):
-        URLResolver().resolve("https://hiremetech.com/jobs/123")
+        URLResolver(session=_ApiSession()).resolve("https://hiremetech.com/jobs/123")
 
 
 def test_no_playwright_raises(monkeypatch):
     monkeypatch.setattr(resolvers, "HAS_PLAYWRIGHT", False)
     with pytest.raises(ResolveError, match="Playwright"):
-        URLResolver(hireme_token="t").resolve("https://www.hiremetech.com/jobs/123")
+        _resolver().resolve("https://www.hiremetech.com/jobs/123")
 
 
 def test_browser_closed_and_error_wrapped_on_failure(monkeypatch):
@@ -110,7 +136,7 @@ def test_browser_closed_and_error_wrapped_on_failure(monkeypatch):
     monkeypatch.setattr(URLResolver, "_click_through_hiremetech", boom)
 
     with pytest.raises(ResolveError, match="HireMeTech"):
-        URLResolver(hireme_token="t").resolve("https://hiremetech.com/jobs/123")
+        _resolver().resolve("https://hiremetech.com/jobs/123")
     assert browser.closed
 
 
@@ -125,7 +151,7 @@ def test_resolve_error_from_click_through_is_kept(monkeypatch):
     monkeypatch.setattr(URLResolver, "_click_through_hiremetech", no_button)
 
     with pytest.raises(ResolveError, match="כפתור הגשה"):
-        URLResolver(hireme_token="t").resolve("https://hiremetech.com/jobs/123")
+        _resolver().resolve("https://hiremetech.com/jobs/123")
     assert browser.closed
 
 
@@ -176,12 +202,12 @@ def test_every_hiremetech_failure_allows_the_public_page(monkeypatch):
 
     monkeypatch.setattr(URLResolver, "_click_through_hiremetech", no_redirect)
     with pytest.raises(ResolveError) as err:
-        URLResolver(hireme_token="t").resolve("https://hiremetech.com/job/1")
+        _resolver().resolve("https://hiremetech.com/job/1")
     assert err.value.public_fallback is True
 
     monkeypatch.delenv("HIRE_ME_TECH_TOKEN", raising=False)
     with pytest.raises(ResolveError) as err:
-        URLResolver().resolve("https://hiremetech.com/job/1")
+        URLResolver(session=_ApiSession()).resolve("https://hiremetech.com/job/1")
     assert err.value.public_fallback is True
 
 
@@ -197,5 +223,72 @@ def test_successful_resolution_returns_company_url(monkeypatch):
         URLResolver, "_click_through_hiremetech", lambda self, *a: "https://acme.comeet.com/jobs/1"
     )
 
-    assert URLResolver(hireme_token="t").resolve("https://hiremetech.com/jobs/1") == "https://acme.comeet.com/jobs/1"
+    assert _resolver().resolve("https://hiremetech.com/jobs/1") == "https://acme.comeet.com/jobs/1"
     assert browser.closed
+
+
+# --- ה-API של HireMeTech (/api/jobs/{id}): פענוח בלי דפדפן, גם בשרת החינמי ---
+
+_VALID = _jwt(datetime.now(timezone.utc) + timedelta(days=3))
+_GUEST_JOB = {  # כמו התשובה האמיתית לאורח: החברה וקישור ההגשה מוסתרים
+    "title": "Full Stack Developer",
+    "company_name": "",
+    "company": {"name": "", "employer_masked": True},
+    "employer_masked": True,
+    "job_url": "https://hiremetech.com/job/152001956",
+    "apply_url": None,
+    "description": "Requirements: 1-2 years of C#",
+}
+
+
+def _no_browser(monkeypatch):
+    monkeypatch.setenv("ENABLE_PLAYWRIGHT", "false")
+    monkeypatch.setattr(resolvers, "sync_playwright", lambda: pytest.fail("browser launched"), raising=False)
+
+
+def test_api_returns_the_company_link_without_a_browser(monkeypatch):
+    _no_browser(monkeypatch)
+    job = {**_GUEST_JOB, "employer_masked": False, "company": {"name": "Acme"}, "company_name": "Acme",
+           "job_url": "https://acme.comeet.com/jobs/1?utm_source=hiremetech"}
+    r = _resolver(_VALID, status=200, job=job)
+
+    assert r.resolve("https://hiremetech.com/he-il/job/152001956") == "https://acme.comeet.com/jobs/1?utm_source=hiremetech"
+    url, headers = r.session.calls[0]
+    assert url == "https://hiremetech.com/api/jobs/152001956"
+    assert headers["Authorization"] == f"Bearer {_VALID}"
+
+
+@pytest.mark.parametrize("status, job", [(200, _GUEST_JOB), (401, None), (403, None)])
+def test_api_rejecting_the_token_says_so(monkeypatch, status, job):
+    """תשובה של אורח (החברה מוסתרת) למרות שנשלח טוקן = האתר לא קיבל אותו."""
+    _no_browser(monkeypatch)
+    with pytest.raises(ResolveError, match="דחה את הטוקן") as err:
+        _resolver(_VALID, status=status, job=job).resolve("https://hiremetech.com/job/152001956")
+    assert err.value.public_fallback is True
+
+
+def test_api_removed_job(monkeypatch):
+    _no_browser(monkeypatch)
+    with pytest.raises(ResolveError, match="לא נמצאה") as err:
+        _resolver(_VALID, status=404).resolve("https://hiremetech.com/job/999")
+    assert err.value.public_fallback is True
+
+
+def test_api_without_a_company_link_falls_back_to_the_browser(monkeypatch):
+    """מחובר אבל אין קישור חיצוני ב-API - הלחיצה על 'הגש מועמדות' בדפדפן עדיין עשויה להוביל לאתר."""
+    browser = _FakeBrowser()
+    monkeypatch.setenv("ENABLE_PLAYWRIGHT", "true")
+    monkeypatch.setattr(resolvers, "HAS_PLAYWRIGHT", True)
+    monkeypatch.setattr(resolvers, "sync_playwright", _fake_playwright(browser), raising=False)
+    monkeypatch.setattr(URLResolver, "_click_through_hiremetech", lambda self, *a: "https://acme.com/careers/1")
+    job = {**_GUEST_JOB, "employer_masked": False, "company": {"name": "Acme"}}
+
+    assert _resolver(_VALID, status=200, job=job).resolve("https://hiremetech.com/job/1") == "https://acme.com/careers/1"
+
+
+def test_api_without_a_company_link_and_no_browser_scrapes_the_description(monkeypatch):
+    _no_browser(monkeypatch)
+    job = {**_GUEST_JOB, "employer_masked": False, "company": {"name": "Acme"}}
+    with pytest.raises(ResolveError, match="לא התקבל קישור") as err:
+        _resolver(_VALID, status=200, job=job).resolve("https://hiremetech.com/job/1")
+    assert err.value.public_fallback is True

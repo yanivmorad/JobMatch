@@ -7,6 +7,8 @@ requests==2.32.5
 python-dotenv==1.2.1
 playwright==1.57.0
 markdownify==1.2.2
+# HTML parsing for the direct-HTML scraper step (also a markdownify dependency)
+beautifulsoup4==4.14.3
 # IANA time zones for zoneinfo (Gemini's daily quota resets at midnight Pacific);
 # Windows and slim images have no system tz database
 tzdata==2026.6

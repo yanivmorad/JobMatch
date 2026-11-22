@@ -185,3 +185,167 @@ def test_scraper_falls_back_to_jina_when_the_api_fails(monkeypatch):
     s = _scraper(_Boom())
     monkeypatch.setattr(s, "_try_jina", lambda url, tag, trace: {"source": "jina", "full_description": "x"})
     assert s.scrape(_BB_URL, trace=[])["source"] == "jina"
+
+
+# --- HireMeTech: /api/jobs/{id} (התיאור המלא גם בלי התחברות; החברה מוסתרת) ---
+
+import base64
+import json
+from datetime import datetime, timedelta, timezone
+
+from scraper_service import hiremetech
+
+_HMT_URL = "https://hiremetech.com/he-il/job/152001956?f=1"
+_HMT_API = "https://hiremetech.com/api/jobs/152001956"
+_HMT_DESC = (
+    "דרישות:\n✔ ניסיון של שנה עד שנתיים בפיתוח Full Stack\n✔ ניסיון מוכח ב־C#, .NET Framework ו־SQL\n"
+    "מה אנחנו מציעים?\n• משרה מלאה | אזור המרכז\nלהגשת קורות חיים:\n📧 jobs@giv-solutions.com"
+)
+
+
+def _hmt_job(**overrides):
+    """בצורה של התשובה האמיתית לאורח (2026-11-22)."""
+    job = {
+        "id": 152001956,
+        "title": "Full Stack Developer",
+        "company_name": "",
+        "company": {"name": "", "employer_masked": True},
+        "employer_masked": True,
+        "location": {"basic": {"display_name": "Israel"}, "work_model": {"display_tag": "On-site"}},
+        "employment_type": "Full-time",
+        "job_level": "Junior / Entry Level",
+        "department": "Software Engineering",
+        "skills_required": ["C#", ".NET Framework", "SQL", "React"],
+        "experience": {"min_years": 1, "max_years": 2},
+        "posted_date": "2026-10-26",
+        "description": _HMT_DESC,
+        "is_active": True,
+        "job_status": "published",
+        "closure_reason": None,
+        "job_url": "https://hiremetech.com/job/152001956",
+        "apply_url": None,
+    }
+    job.update(overrides)
+    return job
+
+
+class _HmtSession:
+    """מחזיר תשובה לפי הטוקן: {None: guest_resp, "<token>": resp}. שומר את הכותרות."""
+
+    def __init__(self, by_token):
+        self.by_token = by_token
+        self.calls = []
+
+    def get(self, url, headers=None, timeout=None):
+        auth = (headers or {}).get("Authorization")
+        self.calls.append((url, auth))
+        token = auth.split(" ", 1)[1] if auth else None
+        return self.by_token.get(token, _Resp(500))
+
+
+def _jwt(days):
+    def b64(d):
+        return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+
+    exp = datetime.now(timezone.utc) + timedelta(days=days)
+    return f"{b64({'alg': 'HS256'})}.{b64({'exp': int(exp.timestamp())})}.sig"
+
+
+@pytest.mark.parametrize(
+    "url, job_id",
+    [
+        ("https://hiremetech.com/job/147318715", "147318715"),
+        ("https://hiremetech.com/he-il/job/153667177?f=1", "153667177"),
+        ("https://www.hiremetech.com/job/1/", "1"),
+        ("https://hiremetech.com/companies/5", None),
+        ("https://acme.com/job/1", None),
+    ],
+)
+def test_hiremetech_job_id(url, job_id):
+    assert hiremetech.job_id(url) == job_id
+
+
+def test_hiremetech_guest_api_gives_the_full_description(monkeypatch):
+    """בלי טוקן: כל הפרטים חוץ משם החברה - ובלי דפדפן (אין Playwright בשרת החינמי)."""
+    monkeypatch.delenv("HIRE_ME_TECH_TOKEN", raising=False)
+    session = _HmtSession({None: _Resp(200, {"job": _hmt_job()})})
+    r = fetch_from_site_api(_HMT_URL, session)
+
+    assert r.reason == "ok" and r.method == "hiremetech_api"
+    assert r.job_title == "Full Stack Developer" and r.company is None
+    assert session.calls == [(_HMT_API, None)]
+    assert r.text.startswith("Title: Full Stack Developer\n")
+    assert "Company: (שם החברה מוסתר" in r.text
+    assert "Experience required: 1-2 years" in r.text and "Level: Junior / Entry Level" in r.text
+    assert "Skills: C#, .NET Framework, SQL, React" in r.text
+    # התיאור הוא טקסט רגיל עם שורות - לא לאחד אותן (markdownify היה מאחד)
+    assert "✔ ניסיון של שנה עד שנתיים בפיתוח Full Stack\n✔ ניסיון מוכח" in r.text
+
+
+def test_hiremetech_with_a_valid_token_gets_the_company(monkeypatch):
+    token = _jwt(days=3)
+    monkeypatch.setenv("HIRE_ME_TECH_TOKEN", token)
+    job = _hmt_job(employer_masked=False, company={"name": "Giv Solutions"}, company_name="Giv Solutions")
+    r = fetch_from_site_api(_HMT_URL, _HmtSession({token: _Resp(200, {"job": job})}))
+    assert r.company == "Giv Solutions"
+    assert "Company: Giv Solutions" in r.text
+
+
+def test_hiremetech_rejected_token_falls_back_to_the_guest_view(monkeypatch):
+    token = _jwt(days=3)
+    monkeypatch.setenv("HIRE_ME_TECH_TOKEN", token)
+    session = _HmtSession({token: _Resp(401), None: _Resp(200, {"job": _hmt_job()})})
+    r = fetch_from_site_api(_HMT_URL, session)
+    assert r.reason == "ok" and r.company is None
+    assert [auth for _, auth in session.calls] == [f"Bearer {token}", None]
+
+
+def test_hiremetech_expired_token_is_not_sent(monkeypatch):
+    monkeypatch.setenv("HIRE_ME_TECH_TOKEN", _jwt(days=-1))
+    session = _HmtSession({None: _Resp(200, {"job": _hmt_job()})})
+    assert fetch_from_site_api(_HMT_URL, session).reason == "ok"
+    assert session.calls == [(_HMT_API, None)]
+
+
+@pytest.mark.parametrize(
+    "resp",
+    [
+        _Resp(404, {"detail": "Job 1 not found. The job may have been removed"}),
+        _Resp(200, {"job": _hmt_job(is_active=False)}),
+        _Resp(200, {"job": _hmt_job(job_status="closed")}),
+        _Resp(200, {"job": _hmt_job(closure_reason="filled")}),
+    ],
+)
+def test_hiremetech_closed_or_removed_job(monkeypatch, resp):
+    monkeypatch.delenv("HIRE_ME_TECH_TOKEN", raising=False)
+    assert fetch_from_site_api(_HMT_URL, _HmtSession({None: resp})).reason == "job_unavailable"
+
+
+def test_hiremetech_api_error_falls_through(monkeypatch):
+    monkeypatch.delenv("HIRE_ME_TECH_TOKEN", raising=False)
+    assert fetch_from_site_api(_HMT_URL, _HmtSession({None: _Resp(503)})).reason.startswith("api_error")
+
+
+def test_scraper_reads_hiremetech_through_the_api(monkeypatch):
+    monkeypatch.delenv("HIRE_ME_TECH_TOKEN", raising=False)
+    s = _scraper(_HmtSession({None: _Resp(200, {"job": _hmt_job()})}))
+    monkeypatch.setattr(s, "_try_jina", lambda *a, **k: pytest.fail("Jina should not render the SPA"))
+    result = s.scrape("https://hiremetech.com/job/152001956", trace=[])
+    assert result["source"] == "hiremetech_api"
+    assert result["job_title"] == "Full Stack Developer" and result["company"] is None
+    assert "Company | HireMe" not in result["full_description"]
+
+
+def test_hiremetech_job_without_a_description_is_final(monkeypatch):
+    """ל-HireMeTech יש משרות עם כותרת בלבד - לא שולחים ל-AI, ולא מנסים סורק אחר."""
+    from scraper_service.utils import failure_message, is_transient_failure
+
+    monkeypatch.delenv("HIRE_ME_TECH_TOKEN", raising=False)
+    s = _scraper(_HmtSession({None: _Resp(200, {"job": _hmt_job(description="", requirements=None)})}))
+    monkeypatch.setattr(s, "_try_jina", lambda *a, **k: pytest.fail("no fallback when the API has no description"))
+    trace = []
+    assert s.scrape("https://hiremetech.com/job/143575413", trace=trace) is None
+    reasons = [a["reason"] for a in trace]
+    assert reasons == ["hiremetech_no_description"]
+    assert not is_transient_failure(reasons)
+    assert "טוקן HireMeTech" in failure_message(reasons)

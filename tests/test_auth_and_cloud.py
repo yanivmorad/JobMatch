@@ -83,8 +83,12 @@ def test_scraper_skips_the_browser_when_disabled(monkeypatch):
 def test_hiremetech_uses_the_public_page_when_the_browser_is_disabled(monkeypatch):
     monkeypatch.setenv("ENABLE_PLAYWRIGHT", "false")
     monkeypatch.setattr(resolvers, "HAS_PLAYWRIGHT", True)
+    class _ApiDown:  # ה-API לא ענה - בלי דפדפן נשאר רק התיאור הציבורי
+        def get(self, *a, **k):
+            raise ConnectionError("offline")
+
     with pytest.raises(ResolveError) as err:
-        URLResolver(hireme_token="t").resolve("https://hiremetech.com/job/1")
+        URLResolver(hireme_token="t", session=_ApiDown()).resolve("https://hiremetech.com/job/1")
     assert err.value.public_fallback is True
 
 

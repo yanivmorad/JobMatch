@@ -1,5 +1,5 @@
 """
-חילוץ ישיר מ-API ציבורי של מערכות גיוס (ATS) שהדפים שלהן הם SPA.
+חילוץ ישיר מ-API ציבורי של מערכות גיוס (ATS) שהדפים שלהן הם SPA (Workday, BambooHR, HireMeTech).
 
 Jina / Playwright מקבלים מהדפים האלה לפעמים רק שלד ריק (BambooHR: 91 תווים, Workday: 9 תווים
 כשהרינדור איטי), אבל אותם אתרים טוענים את המשרה מ-endpoint ציבורי של JSON - אותו endpoint
@@ -8,10 +8,13 @@ Jina / Playwright מקבלים מהדפים האלה לפעמים רק שלד ר
     fetch_from_site_api(url, session) -> SiteApiResult | None
         None = האתר לא נתמך כאן (ממשיכים ל-Jina / Playwright)
 """
+import os
 import re
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import parse_qs, urlsplit
+
+from scraper_service import hiremetech
 
 try:
     from markdownify import markdownify as _md
@@ -137,16 +140,52 @@ def _bamboohr(url: str, session) -> Optional[SiteApiResult]:
     return SiteApiResult("bamboohr_api", text=text, reason="ok", status=res.status_code, job_title=title)
 
 
-_HANDLERS = (_workday, _bamboohr)
+# --- HireMeTech: https://hiremetech.com/job/{id} -> /api/jobs/{id} (ראו hiremetech.py) ---
+
+
+def _hiremetech(url: str, session) -> Optional[SiteApiResult]:
+    job_id = hiremetech.job_id(url)
+    if not job_id:
+        return None
+    # עם טוקן תקף ה-API מחזיר גם את שם החברה; טוקן שפג / נדחה -> הגרסה הציבורית
+    token = (os.getenv("HIRE_ME_TECH_TOKEN") or "").strip()
+    if token and hiremetech.token_expired(token):
+        token = ""
+    status, job = hiremetech.fetch_job(job_id, session, token or None)
+    if token and status in (401, 403):
+        status, job = hiremetech.fetch_job(job_id, session)
+    if status in (404, 410):
+        return SiteApiResult("hiremetech_api", reason="job_unavailable", status=status)
+    if status != 200 or not job:
+        return SiteApiResult("hiremetech_api", reason=f"api_error: http {status}", status=status)
+    title = (job.get("title") or "").strip()
+    if hiremetech.is_closed(job):
+        return SiteApiResult("hiremetech_api", reason="job_unavailable", status=status, job_title=title or None)
+    if not title:
+        return SiteApiResult("hiremetech_api", reason="api_error: empty posting", status=status)
+    if not any((job.get(k) or "") for k in ("description", "requirements")):
+        # יש משרות שב-HireMeTech יש להן רק כותרת ("תיאור המשרה אינו זמין"). באג (E2E): Jina סרק
+        # את הדף הזה, וה-AI נתן ציון על סמך הכותרת בלבד
+        return SiteApiResult("hiremetech_api", reason="hiremetech_no_description", status=status, job_title=title)
+    return SiteApiResult(
+        "hiremetech_api",
+        text=hiremetech.document(job),
+        reason="ok",
+        status=status,
+        company=hiremetech.company_name(job),
+        job_title=title,
+    )
+
+
+_HANDLERS = (("workday_api", _workday), ("bamboohr_api", _bamboohr), ("hiremetech_api", _hiremetech))
 
 
 def fetch_from_site_api(url: str, session) -> Optional[SiteApiResult]:
     """None אם האתר לא נתמך. שגיאת רשת / JSON לא צפוי -> reason='api_error: ...' (ואז ממשיכים ל-Jina)."""
-    for handler in _HANDLERS:
+    for name, handler in _HANDLERS:
         try:
             result = handler(url, session)
         except Exception as e:
-            name = "workday_api" if handler is _workday else "bamboohr_api"
             return SiteApiResult(name, reason=f"api_error: {type(e).__name__}")
         if result is not None:
             return result

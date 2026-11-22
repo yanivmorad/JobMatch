@@ -1,14 +1,14 @@
 # src/scraper_service/resolvers.py
-import base64
-import json
 import logging
 import os
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import urlparse
 
+import requests
 from dotenv import load_dotenv
 
+from scraper_service import hiremetech
+from scraper_service.hiremetech import is_hiremetech, token_expiry  # noqa: F401 (ממשק ציבורי)
 from scraper_service.utils import playwright_allowed
 
 try:
@@ -49,16 +49,6 @@ class ResolveError(Exception):
         self.public_fallback = public_fallback
 
 
-def token_expiry(token: str) -> Optional[datetime]:
-    """מועד התפוגה (exp) של JWT, בלי לאמת חתימה. None אם זה לא JWT או שאין exp."""
-    try:
-        payload = token.split(".")[1]
-        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-        return datetime.fromtimestamp(int(claims["exp"]), tz=timezone.utc)
-    except Exception:
-        return None
-
-
 def hiremetech_token_status(token: Optional[str] = None) -> dict:
     """מצב הטוקן (ל-/health ולוגים): configured / expires_at / expired. לא חושף את הטוקן עצמו."""
     token = token if token is not None else (os.getenv("HIRE_ME_TECH_TOKEN") or "").strip()
@@ -88,9 +78,7 @@ def _debug_screenshot(page, name: str) -> None:
         logger.warning(f"Could not save debug screenshot {name}: {e}")
 
 
-def is_hiremetech(url: str) -> bool:
-    host = (urlparse(url).hostname or "").lower()
-    return host == "hiremetech.com" or host.endswith(".hiremetech.com")
+_TOKEN_REJECTED = "HireMeTech: האתר דחה את הטוקן (HIRE_ME_TECH_TOKEN) - יש להתחבר לאתר ולעדכן אותו"
 
 
 class URLResolver:
@@ -99,12 +87,13 @@ class URLResolver:
     Currently supports HireMeTech.
     """
 
-    def __init__(self, hireme_token: Optional[str] = None):
+    def __init__(self, hireme_token: Optional[str] = None, session=None):
         """
         Initialize the resolver with authentication tokens.
         If no token is provided, it attempts to fetch from HIRE_ME_TECH_TOKEN env var.
         """
         self.hireme_token = hireme_token or (os.getenv("HIRE_ME_TECH_TOKEN") or "").strip()
+        self.session = session or requests.Session()
 
     def resolve(self, url: str, job_id: Optional[int] = None) -> str:
         """
@@ -127,13 +116,8 @@ class URLResolver:
         Matches the logic of the successful standalone script.
         """
         id_tag = f"[ID {job_id}] " if job_id else ""
-        # כל כישלון כאן מאפשר fallback: הדף הציבורי של HireMeTech מכיל את תיאור המשרה
-        if not HAS_PLAYWRIGHT or not playwright_allowed():
-            raise ResolveError(
-                "HireMeTech: הדפדפן (Playwright) לא זמין בשרת, אי אפשר לפענח את הקישור",
-                public_fallback=True,
-            )
-
+        # כל כישלון כאן מאפשר fallback: ה-API הציבורי של HireMeTech מחזיר את תיאור המשרה
+        # (בלי שם החברה), כך שהמשרה עדיין מקבלת ציון
         if not self.hireme_token:
             raise ResolveError(
                 "HireMeTech: חסר HIRE_ME_TECH_TOKEN בהגדרות השרת", public_fallback=True
@@ -145,6 +129,18 @@ class URLResolver:
             raise ResolveError(
                 f"HireMeTech: הטוקן (HIRE_ME_TECH_TOKEN) פג ב-{expires:%d/%m/%Y} - "
                 "יש להתחבר לאתר ולעדכן אותו",
+                public_fallback=True,
+            )
+
+        # 1. ה-API עם הטוקן: בלי דפדפן, ולכן עובד גם בשרת החינמי
+        company_url = self._resolve_via_api(url, id_tag)
+        if company_url:
+            return company_url
+
+        # 2. הדפדפן: לחיצה על "הגש מועמדות" (כשה-API לא החזיר קישור)
+        if not HAS_PLAYWRIGHT or not playwright_allowed():
+            raise ResolveError(
+                "HireMeTech: לא התקבל קישור לאתר החברה, והדפדפן (Playwright) כבוי בשרת",
                 public_fallback=True,
             )
 
@@ -168,6 +164,36 @@ class URLResolver:
             raise ResolveError(
                 f"HireMeTech: שגיאה בפענוח הקישור ({type(e).__name__})", public_fallback=True
             ) from e
+
+    def _resolve_via_api(self, url: str, id_tag: str) -> Optional[str]:
+        """
+        קישור ההגשה מ-/api/jobs/{id} עם הטוקן, או None (אין מזהה / ה-API לא ענה / אין קישור -
+        ואז מנסים את הדפדפן). טוקן שנדחה ומשרה שהוסרה -> ResolveError (אין טעם לנסות דפדפן).
+        """
+        job_id = hiremetech.job_id(url)
+        if not job_id:
+            return None
+        try:
+            status, job = hiremetech.fetch_job(job_id, self.session, self.hireme_token)
+        except Exception as e:
+            logger.warning(f"{id_tag}Resolver: HireMeTech API failed ({type(e).__name__}) for {url}")
+            return None
+        if status in (401, 403):
+            raise ResolveError(_TOKEN_REJECTED, public_fallback=True)
+        if status in (404, 410):
+            raise ResolveError("HireMeTech: המשרה לא נמצאה באתר (ייתכן שהוסרה)", public_fallback=True)
+        if status != 200 or not job:
+            logger.warning(f"{id_tag}Resolver: HireMeTech API returned {status} for {url}")
+            return None
+        if hiremetech.is_masked(job):
+            # האתר מחזיר את הגרסה של אורח כשהוא לא מקבל את הטוקן
+            raise ResolveError(_TOKEN_REJECTED, public_fallback=True)
+        company_url = hiremetech.external_url(job)
+        if company_url:
+            logger.info(f"{id_tag}Resolver: SUCCESS via API! Resolved {url} to {company_url}")
+        else:
+            logger.info(f"{id_tag}Resolver: HireMeTech API has no external apply link for {url}")
+        return company_url
 
     def _click_through_hiremetech(self, browser, url, job_id, id_tag) -> str:
         context = browser.new_context(
@@ -193,9 +219,7 @@ class URLResolver:
         # טוקן שהאתר דחה (פג / בוטל) נמחק מ-localStorage אחרי הטעינה, והדף מוצג כאורח:
         # הכפתור "הגש מועמדות" עדיין קיים אבל לא מוביל לאתר החברה
         if not page.evaluate("() => !!window.localStorage.getItem('auth_token')"):
-            raise ResolveError(
-                "HireMeTech: האתר דחה את הטוקן (HIRE_ME_TECH_TOKEN) - יש להתחבר לאתר ולעדכן אותו"
-            )
+            raise ResolveError(_TOKEN_REJECTED)
 
         # 4. Smart Button Detection
         apply_button = None

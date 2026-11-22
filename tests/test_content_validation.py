@@ -336,3 +336,49 @@ from scraper_service.utils import is_transient_failure
 )
 def test_transient_failures_are_told_apart_from_answers(reasons, transient):
     assert is_transient_failure(reasons) is transient
+
+
+# --- האתר אומר שאין לו תיאור למשרה (באג E2E: ציון על סמך הכותרת בלבד) ---
+
+# הדף הציבורי של HireMeTech למשרה בלי תיאור, כפי ש-Jina החזיר אותו (מקוצר)
+_HMT_NO_DESCRIPTION = """Title: Part-Time Research Scientist PhD Intern, 2027 (שם החברה מוסתר בדף הציבורי של HireMeTech)
+
+URL Source: https://hiremetech.com/job/143575413
+
+Markdown Content:
+[בית](https://hiremetech.com/he-il/v2)[משרות](https://hiremetech.com/he-il/jobs-app)
+תל אביב מהמשרד
+
+🚆 Tel Aviv-HaShalom
+
+### פרטי המשרה
+
+סטודנט / מתמחה רמת המשרה
+
+פורסמה ב-17 באוג׳ 2026
+
+### תיאור המשרה אינו זמין
+
+אין תיאור מפורט זמין למשרה זו.
+
+[צפה באתר החברה](https://hiremetech.com/job/143575413)
+
+### סקירת משרה
+
+חברה: התחברו לראות את פרטי החברה. גודל החברה: לא זמין. סוג: משרה מלאה
+"""
+
+
+def test_page_without_a_description_is_not_sent_to_the_ai():
+    assert validate_content(_HMT_NO_DESCRIPTION) == (False, "no_description")
+    assert not is_transient_failure(["no_description"])
+    assert "אין תיאור" in failure_message(["jina_error: ReadTimeout", "no_description"])
+
+
+def test_real_description_mentioning_the_phrase_is_kept():
+    text = (
+        "Title: Data Analyst\n\nMarkdown Content:\nWe are looking for a Data Analyst. Requirements: 2+ years of "
+        "experience with SQL and Python. Responsibilities: build dashboards. Skills: Tableau.\n"
+        "Note: for internal roles, no description available on the intranet - ask HR.\n"
+    )
+    assert validate_content(text) == (True, "ok")

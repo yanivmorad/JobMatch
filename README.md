@@ -10,7 +10,7 @@ raw message text
    │  POST /api/jobs/raw   (link extraction: drops app-store / group / non-job links, utm, duplicates)
    ▼
 PENDING_RESOLVE ──resolver──▶ WAITING_FOR_SCRAPE ──scraper──▶ WAITING_FOR_AI ──AI──▶ COMPLETED
-   (HireMeTech → company site)   (ATS API / Jina / Playwright)   (Gemini, model chain)   score + analysis in the DB
+   (HireMeTech → company site)   (ATS API / Jina / HTML / Playwright)   (Gemini, model chain)   score + analysis in the DB
 ```
 
 The three workers run inside the API process and use the `jobs` table as a queue
@@ -76,7 +76,7 @@ See `.env.example` for every variable. The important ones:
 | `GEMINI_API_KEY` | Google AI Studio key (free tier). |
 | `JINA_API_KEY` | Jina Reader key (scraper). |
 | `API_TOKEN` | Shared secret: every `/api/*` call needs `Authorization: Bearer <token>`. Unset = open API (local only). |
-| `HIRE_ME_TECH_TOKEN` | `auth_token` from hiremetech.com localStorage. Expires after **7 days**; without a valid one HireMeTech jobs are analyzed from the public page (no company name). |
+| `HIRE_ME_TECH_TOKEN` | `auth_token` from hiremetech.com localStorage (sign in, DevTools → Application → Local Storage). Expires after **7 days**. Without a valid one HireMeTech jobs are still scored from HireMeTech's public API (full description, no company name or apply link). With one, the API gives the company's apply link - no browser needed, so it works on Render free too. |
 | `GEMINI_MODEL` / `GEMINI_MODELS` | One model, or a chain. Default chain: `gemini-3.5-flash-lite, gemini-2.5-flash-lite, gemini-3-flash-preview`. |
 | `GEMINI_RPM` / `GEMINI_RPD` | Local rate limit (default 10/min, no daily cap). |
 | `ENABLE_PLAYWRIGHT` | `false` = no browser (saves ~300 MB RAM). |

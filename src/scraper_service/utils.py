@@ -71,6 +71,14 @@ _LOGIN = (
     "שכחתי סיסמה",
 )
 _COOKIES = ("cookie", "עוגיות")
+# האתר עצמו אומר שאין לו תיאור למשרה (HireMeTech: רק כותרת ורמה). בלי זה ה-AI נתן ציון על הכותרת
+_NO_DESCRIPTION = (
+    "תיאור המשרה אינו זמין",
+    "אין תיאור מפורט זמין",
+    "job description is not available",
+    "no description available",
+    "no job description available",
+)
 
 # כותרת הדף (שורת Title של Jina / <title>) שמעידה על דף שאינו משרה.
 # גבולות מילה: "Req 40412" או "Blogin" לא אמורים להיפסל.
@@ -196,7 +204,7 @@ def validate_content(text: str, url: Optional[str] = None) -> Tuple[bool, str]:
     Returns:
         (True, "ok") או (False, reason), כש-reason הוא אחד מ:
         empty, too_short, http_error_<code>, job_unavailable, blocked, bad_title,
-        error_page, captcha, login_wall, cookie_wall, no_job_content
+        no_description, error_page, captcha, login_wall, cookie_wall, no_job_content
     """
     if not text or not text.strip():
         return False, "empty"
@@ -225,6 +233,15 @@ def validate_content(text: str, url: Optional[str] = None) -> Tuple[bool, str]:
     body = _JINA_HEADER.sub("", text).strip()
     if len(body) < MIN_LENGTH:
         return False, "too_short"
+
+    if _find(lowered, _NO_DESCRIPTION):
+        # "תיאור המשרה אינו זמין" עצמו נספר כסימן ("תיאור המשרה"), וגם "משרה מלאה" מכרטיס
+        # הפרטים - סופרים בלי הביטוי, ודורשים יותר מהמינימון הרגיל
+        stripped = body.lower()
+        for phrase in _NO_DESCRIPTION:
+            stripped = stripped.replace(phrase, "")
+        if count_job_signals(stripped) <= MIN_JOB_SIGNALS:
+            return False, "no_description"
 
     signals = count_job_signals(body)
     if signals < MIN_JOB_SIGNALS:
@@ -255,6 +272,11 @@ def is_content_valid(text: str) -> bool:
 FAILURE_MESSAGES = {
     "job_unavailable": "המשרה סגורה או אינה זמינה יותר",
     "not_found": "המשרה הוסרה או שהקישור שגוי (הדף לא נמצא)",
+    "hiremetech_no_description": (
+        "ל-HireMeTech אין תיאור למשרה הזו (רק כותרת) - עם טוקן HireMeTech תקף המערכת מגיעה "
+        "לאתר החברה; אחרת אפשר להדביק את התיאור ידנית"
+    ),
+    "no_description": "באתר אין תיאור למשרה הזו (רק כותרת) - אפשר להדביק את התיאור ידנית",
     "blocked": "האתר חסם את הסורק (הגנת בוטים / שגיאה) - אפשר להדביק את תיאור המשרה ידנית",
     "captcha": "האתר דורש אימות CAPTCHA - אפשר להדביק את תיאור המשרה ידנית",
     "login_wall": "האתר דורש התחברות כדי לראות את המשרה - אפשר להדביק את תיאור המשרה ידנית",
@@ -268,6 +290,8 @@ FAILURE_MESSAGES = {
 _FAILURE_PRIORITY = (
     "job_unavailable",
     "not_found",
+    "hiremetech_no_description",
+    "no_description",
     "login_wall",
     "captcha",
     "blocked",
@@ -282,13 +306,16 @@ DEFAULT_FAILURE_MESSAGE = "הסורק לא הצליח לחלץ תיאור משר
 # מסיבות כאלה - המשרה צריכה ניסיון חוזר ולא NO_DATA (באג: Jina ReadTimeout רגעי סומן
 # כ"אין מידע" סופי, ואותו קישור עבר בשנייה אחת בניסיון הבא).
 _TRANSIENT_PREFIXES = ("jina_error", "jina_http_429", "jina_http_5", "fetch_failed", "no_time_left", "api_error")
+# לא מכריעים לשום כיוון: selector שלא קיים בדף, וכישלון "רך" של הורדת ה-HTML הישירה
+# (דף SPA שהתוכן שלו נטען ב-JavaScript, חסימת בוטים לבקשה בלי דפדפן)
+_NEUTRAL_PREFIXES = ("jina_selector_miss", "direct_")
 
 
 def is_transient_failure(reasons) -> bool:
     reasons = [r for r in reasons if r]
     if not reasons:
         return True
-    definitive = [r for r in reasons if not r.startswith(_TRANSIENT_PREFIXES) and r != "jina_selector_miss"]
+    definitive = [r for r in reasons if not r.startswith(_TRANSIENT_PREFIXES + _NEUTRAL_PREFIXES)]
     return not definitive
 
 
