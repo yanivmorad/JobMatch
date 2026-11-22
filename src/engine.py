@@ -42,6 +42,10 @@ class TransientAIError(AIError):
     """תקלה זמנית (5xx, רשת, timeout) - המשרה חוזרת לתור (עד MAX_JOB_ATTEMPTS)."""
 
 
+class ModelOverloadedError(TransientAIError):
+    """503 (UNAVAILABLE / "model overloaded"): עומס אצל Google - עוברים למודל הבא בשרשרת."""
+
+
 class InvalidAIResponse(AIError):
     """התשובה לא עמדה בסכמה גם אחרי VALIDATION_ATTEMPTS ניסיונות."""
 
@@ -252,6 +256,9 @@ class JobAnalyzer:
                 f"⚠️ Gemini 429 (quota: {err.quota_ids or '?'} = {err.quota_values or '?'}, retry after {err.retry_after}s)"
             )
             raise err
+        if status == 503:
+            logger.warning(f"⚠️ Gemini HTTP 503 ({self.model_name} overloaded)")
+            raise ModelOverloadedError(f"Gemini HTTP 503 ({self.model_name})")
         if status >= 500:
             logger.warning(f"⚠️ Gemini HTTP {status}")
             raise TransientAIError(f"Gemini HTTP {status}")

@@ -310,3 +310,28 @@ def test_legit_redirects_are_kept(requested, final):
 
 def test_final_url_without_requested_url_is_ignored():
     assert validate_content(_page("https://www.comeet.com/jobs/supercom/46.00A")) == (True, "ok")
+
+
+# ------------------------------------------------- transient vs definitive failures
+
+import pytest as _pytest
+
+from scraper_service.utils import is_transient_failure
+
+
+@_pytest.mark.parametrize(
+    "reasons, transient",
+    [
+        (["jina_error: ReadTimeout"], True),  # באג: סומן NO_DATA סופי
+        (["jina_selector_miss", "jina_error: ConnectionError", "fetch_failed"], True),
+        (["jina_http_503"], True),
+        (["jina_http_429", "no_time_left"], True),
+        (["api_error: Timeout"], True),
+        (["jina_error: ReadTimeout", "job_unavailable"], False),  # תשובה אמיתית מאחד הניסיונות
+        (["http_error_410", "captcha"], False),
+        (["no_job_content"], False),
+        (["jina_selector_miss", "http_error_404"], False),
+    ],
+)
+def test_transient_failures_are_told_apart_from_answers(reasons, transient):
+    assert is_transient_failure(reasons) is transient

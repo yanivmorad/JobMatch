@@ -278,6 +278,20 @@ _FAILURE_PRIORITY = (
 DEFAULT_FAILURE_MESSAGE = "הסורק לא הצליח לחלץ תיאור משרה"
 
 
+# סיבות שמעידות על תקלה בדרך (השירות לא ענה), לא על תוכן הדף. אם *כל* הניסיונות נכשלו
+# מסיבות כאלה - המשרה צריכה ניסיון חוזר ולא NO_DATA (באג: Jina ReadTimeout רגעי סומן
+# כ"אין מידע" סופי, ואותו קישור עבר בשנייה אחת בניסיון הבא).
+_TRANSIENT_PREFIXES = ("jina_error", "jina_http_429", "jina_http_5", "fetch_failed", "no_time_left", "api_error")
+
+
+def is_transient_failure(reasons) -> bool:
+    reasons = [r for r in reasons if r]
+    if not reasons:
+        return True
+    definitive = [r for r in reasons if not r.startswith(_TRANSIENT_PREFIXES) and r != "jina_selector_miss"]
+    return not definitive
+
+
 def failure_message(reasons) -> str:
     """בוחר את ההודעה הכי אינפורמטיבית מתוך הסיבות של כל הניסיונות (Jina, Playwright)."""
     reasons = [r for r in reasons if r]

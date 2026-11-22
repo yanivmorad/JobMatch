@@ -41,7 +41,7 @@ from scraper_service.resolvers import (
     hiremetech_token_status,
     is_hiremetech,
 )
-from scraper_service.utils import failure_message
+from scraper_service.utils import failure_message, is_transient_failure
 from services.profile_service import get_profile
 from services.link_extractor import normalize_job_url
 from workers.queue_signal import IdleWaiter, notify, notify_at
@@ -49,10 +49,22 @@ from workers.rate_limiter import AIRateLimiter, ModelPool
 
 # טיפול גמיש בייבוא מנועים
 try:
-    from engine import JobAnalyzer, ModelUnavailableError, RateLimitError, configured_models
+    from engine import (
+        JobAnalyzer,
+        ModelOverloadedError,
+        ModelUnavailableError,
+        RateLimitError,
+        configured_models,
+    )
     from scraper_service.scraper import Scraper
 except ImportError:
-    from src.engine import JobAnalyzer, ModelUnavailableError, RateLimitError, configured_models
+    from src.engine import (
+        JobAnalyzer,
+        ModelOverloadedError,
+        ModelUnavailableError,
+        RateLimitError,
+        configured_models,
+    )
     from src.scraper_service.scraper import Scraper
 
 logger = logging.getLogger("Workers")
@@ -64,6 +76,8 @@ AI_TIMEOUT_SECONDS = 150  # עד 2 בקשות (retry על סכמה) של עד 60
 LOOP_ERROR_MAX_BACKOFF = 60
 # מודל שהחזיר 404 (הוסר / לא קיים) מושבת לזמן הזה, והשרשרת ממשיכה לבא
 MODEL_UNAVAILABLE_SECONDS = 6 * 60 * 60
+# מודל שהחזיר 503 (עומס) מושבת לזמן קצר, והמשרה עוברת למודל הבא
+MODEL_OVERLOADED_SECONDS = 120
 
 
 def max_attempts() -> int:
@@ -201,10 +215,15 @@ async def scrape_next(scraper: Scraper) -> bool:
             logger.info(f"✅ [ID {job_id}] Scraper: done ({result.get('source')})")
             notify("WAITING_FOR_AI")
         else:
-            # תשובה סופית (משרה סגורה / התחברות / CAPTCHA) - אין טעם לנסות שוב אוטומטית
             reasons = [a.get("reason") for a in trace]
             logger.warning(f"⚠️ [ID {job_id}] Scraper: no valid content ({reasons})")
-            await mark_failed(job_id, "NO_DATA", failure_message(reasons))
+            if is_transient_failure(reasons):
+                # השירות לא ענה (timeout / 5xx / 429) - לא תשובה על הדף: ניסיון חוזר עם backoff
+                await _retry_later(job_id, "WAITING_FOR_SCRAPE", "FAILED_SCRAPE",
+                                   f"הסורק לא קיבל תשובה מהאתר ({', '.join(r for r in reasons if r)})")
+            else:
+                # תשובה סופית (משרה סגורה / התחברות / CAPTCHA) - אין טעם לנסות שוב אוטומטית
+                await mark_failed(job_id, "NO_DATA", failure_message(reasons))
     except asyncio.TimeoutError:
         logger.error(f"⏲️ [ID {job_id}] Scraper timeout ({SCRAPE_TIMEOUT_SECONDS}s) for {url}")
         await _retry_later(job_id, "WAITING_FOR_SCRAPE", "FAILED_SCRAPE",
@@ -242,6 +261,13 @@ async def analyze_next(pool: ModelPool) -> bool:
     except RateLimitError as e:
         until = limiter.on_rate_limited(e)
         logger.warning(f"⏸️ [ID {job_id}] AI: Gemini quota hit - job back in queue, paused until {until.isoformat()}")
+        await requeue_job(job_id, "WAITING_FOR_AI")
+        return True
+    except ModelOverloadedError as e:
+        # 503 "model overloaded": עומס אצל Google, לא בעיה של המשרה - המודל מושבת לרגע
+        # והמשרה עוברת למודל הבא בשרשרת (קודם: 3 ניסיונות על אותו מודל ואז FAILED_ANALYSIS)
+        until = limiter.disable_for(MODEL_OVERLOADED_SECONDS, f"{analyzer.model_name} overloaded (503)")
+        logger.warning(f"⏸️ [ID {job_id}] AI: {e} - {analyzer.model_name} paused until {until.isoformat()}, job back in queue")
         await requeue_job(job_id, "WAITING_FOR_AI")
         return True
     except ModelUnavailableError as e:

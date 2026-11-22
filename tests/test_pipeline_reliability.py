@@ -271,3 +271,60 @@ async def test_pending_retries_are_rescheduled_after_a_restart(db):
     job = await get_job_by_url("https://jobs.example/r1")
     _, due = await fail_or_retry(job["id"], "PENDING_RESOLVE", "FAILED_RESOLVE", "boom", max_attempts=3)
     assert await pending_retry_times() == {"PENDING_RESOLVE": due}
+
+
+# --- סריקה: תקלה רגעית אצל Jina היא לא "אין מידע" ---
+
+
+class _FailingScraper:
+    def __init__(self, reasons):
+        self.reasons = reasons
+
+    def scrape(self, url, job_id=None, trace=None):
+        trace.extend({"method": "jina", "reason": r} for r in self.reasons)
+        return None
+
+
+async def _scrape_job(url):
+    await add_new_job(url)
+    await _set(url, status="WAITING_FOR_SCRAPE")
+
+
+async def test_jina_timeout_is_retried_not_marked_no_data(db):
+    """באג (E2E): Jina ReadTimeout רגעי -> NO_DATA סופי, ואותו קישור עבר בשנייה בניסיון הבא."""
+    url = "https://careers.example.com/jobs/1"
+    await _scrape_job(url)
+    await worker_manager.scrape_next(_FailingScraper(["jina_error: ReadTimeout"]))
+    row = await get_job_by_url(url)
+    assert row["status"] == "WAITING_FOR_SCRAPE" and row["retry_count"] == 1
+    assert row["not_before"] is not None
+
+
+async def test_a_real_answer_is_still_no_data(db):
+    url = "https://careers.example.com/jobs/2"
+    await _scrape_job(url)
+    await worker_manager.scrape_next(_FailingScraper(["jina_error: ReadTimeout", "job_unavailable"]))
+    row = await get_job_by_url(url)
+    assert row["status"] == "NO_DATA" and "סגורה" in row["error_log"]
+
+
+# --- Gemini 503 (עומס): עוברים למודל הבא, לא נכשלים ---
+
+
+async def test_overloaded_model_hands_the_job_to_the_next_model(db):
+    from engine import ModelOverloadedError
+
+    url = await _ai_job()
+    busy = _Analyzer(ModelOverloadedError("Gemini HTTP 503"))
+    busy.model_name = "gemini-busy"
+    good = _Analyzer(VALID)
+    pool = ModelPool([(busy, AIRateLimiter("gemini-busy", rpm=0, rpd=0)), (good, _limiter())])
+
+    await worker_manager.analyze_next(pool)
+    row = await get_job_by_url(url)
+    assert row["status"] == "WAITING_FOR_AI" and row["retry_count"] == 0
+    assert pool.members[0][1].available_at() is not None  # מושבת לזמן קצר
+
+    await worker_manager.analyze_next(pool)
+    assert (await get_job_by_url(url))["status"] == "COMPLETED"
+    assert busy.calls == 1 and good.calls == 1
