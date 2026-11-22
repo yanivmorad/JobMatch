@@ -23,6 +23,24 @@ export const FAILED_STATUS_LABELS = {
   DUPLICATE: 'משרה כפולה (כבר קיימת במערכת)',
 };
 
+// השלב בצינור של כל סטטוס - לסיכום "איפה כל קישור עומד" בניטור החי
+export const STATUS_STAGE = {
+  NEW: 'resolve',
+  PENDING_RESOLVE: 'resolve',
+  RESOLVING: 'resolve',
+  WAITING_FOR_SCRAPE: 'scrape',
+  SCRAPING: 'scrape',
+  WAITING_FOR_AI: 'ai',
+  ANALYZING: 'ai',
+  COMPLETED: 'done',
+  FAILED_RESOLVE: 'failed',
+  FAILED_SCRAPE: 'failed',
+  FAILED_ANALYSIS: 'failed',
+  NO_DATA: 'failed',
+  DUPLICATE: 'failed',
+};
+export const jobStage = (status) => STATUS_STAGE[status] || 'resolve';
+
 export const isProcessing = (status) => PROCESSING_STATUSES.includes(status);
 export const isFailed = (status) => FAILED_STATUSES.includes(status);
 // משרות שמוצגות בלשונית ההזנה: בעיבוד או נכשלו

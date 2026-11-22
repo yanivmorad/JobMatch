@@ -8,8 +8,7 @@ import ProfileTab from './ProfileTab';
 import OverviewTab from './OverviewTab';
 import { taskService } from '../services/taskService';
 import { isInPipeline, isProcessing } from '../constants/jobStatus';
-
-const QUEUE_POLL_MS = 5000;
+import { currentRun, pollDelay, shouldRefetch } from '../utils/queueView';
 
 // משרות שממתינות לניתוח בזמן שמכסת ה-AI נגמרה: בלי ההסבר הזה הן נראות "תקועות"
 const AiQuotaBanner = ({ pausedUntil, waiting }) => {
@@ -31,12 +30,16 @@ const JobDashboard = () => {
   const [searchQuery, setSearchQuery] = useState('');
   // כל מודלי ה-AI בהפסקה (המכסה היומית החינמית של Gemini נוצלה) - עד מתי
   const [aiPausedUntil, setAiPausedUntil] = useState(null);
+  // "עכשיו" של הניטור החי (איזו משרה סיימה בשעה האחרונה). מתעדכן בכל טעינה / בדיקת תור,
+  // לא בזמן render (Date.now() ב-render הוא לא טהור)
+  const [now, setNow] = useState(() => Date.now());
 
   // --- 1. שליפת נתונים ---
   const fetchJobs = async () => {
     try {
       const data = await taskService.getJobs();
       setJobs(data);
+      setNow(Date.now());
     } catch (err) {
       console.error("Connection Error", err);
     }
@@ -47,33 +50,55 @@ const JobDashboard = () => {
   useEffect(() => {
     let cancelled = false;
     taskService.getJobs()
-      .then(data => { if (!cancelled) setJobs(data); })
+      .then(data => { if (!cancelled) { setJobs(data); setNow(Date.now()); } })
       .catch(err => console.error("Connection Error", err));
     return () => { cancelled = true; };
   }, []);
 
-  // --- 2. Polling (רענון אוטומטי למשרות בתהליך) ---
-  // קודם: כל 2 שניות כל המשרות, כולל תיאורים מלאים (עשרות KB למשרה) - עומס מיותר על
-  // השרת וה-DB בענן. עכשיו: כל 5 שניות בקשה קטנה למצב התור, ואת הרשימה המלאה מושכים
-  // רק כשמשהו השתנה (version).
+  // --- 2. Polling (רענון אוטומטי) ---
+  // בקשה קטנה למצב התור (ספירה לפי סטטוס + version), ואת הרשימה המלאה מושכים רק כשמשהו השתנה.
+  // באג: ה-polling רץ רק אם ברשימה שנטענה כבר הייתה משרה בעיבוד - משרות שנוספו מחוץ לדשבורד
+  // (תוסף / API / טאב או טלפון אחר) לא הופיעו עד רענון ידני. עכשיו הוא רץ תמיד: כל 5 שניות
+  // כשיש עיבוד, כל 15 כשאין. כשהטאב מוסתר לא בודקים (DB בענן כמו Neon נרדם רק כשאין שאילתות),
+  // וכשחוזרים אליו - בודקים מיד.
   const queueVersion = useRef(null);
+  const jobsRef = useRef(jobs);
+  useEffect(() => { jobsRef.current = jobs; }, [jobs]);
+  const fetchJobsRef = useRef(fetchJobs);
+  useEffect(() => { fetchJobsRef.current = fetchJobs; });
+  const hasProcessing = jobs.some(j => isProcessing(j.status));
+
   useEffect(() => {
-    if (!jobs.some(j => isProcessing(j.status))) return;
+    let timer = null;
+    let stopped = false;
 
-    const interval = setInterval(async () => {
-      try {
-        const { version, ai } = await taskService.getQueueSnapshot();
-        setAiPausedUntil(ai?.paused_until || null);
-        const changed = queueVersion.current !== null && version !== queueVersion.current;
-        queueVersion.current = version;
-        if (changed) fetchJobs();
-      } catch (err) {
-        console.error("Queue poll failed", err);
+    const tick = async () => {
+      clearTimeout(timer);
+      if (stopped) return;
+      if (!document.hidden) {
+        try {
+          const snapshot = await taskService.getQueueSnapshot();
+          if (stopped) return;
+          setAiPausedUntil(snapshot.ai?.paused_until || null);
+          setNow(Date.now());
+          if (shouldRefetch(queueVersion.current, snapshot, jobsRef.current)) fetchJobsRef.current();
+          queueVersion.current = snapshot.version;
+        } catch (err) {
+          console.error("Queue poll failed", err);
+        }
       }
-    }, QUEUE_POLL_MS);
+      if (!stopped) timer = setTimeout(tick, pollDelay(hasProcessing));
+    };
 
-    return () => clearInterval(interval);
-  }, [jobs]);
+    const onVisibilityChange = () => { if (!document.hidden) tick(); };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    timer = setTimeout(tick, pollDelay(hasProcessing));
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [hasProcessing]);
 
   // --- 3. Actions (פונקציות עבודה) ---
 
@@ -172,6 +197,9 @@ const JobDashboard = () => {
   // בעיבוד + נכשלו (FAILED_RESOLVE היה חסר כאן, ולכן משרות שנכשלו בפענוח נעלמו מהממשק)
   const pendingJobs = filteredJobs.filter(j => isInPipeline(j.status));
 
+  // הניטור החי: כל משרה בעיבוד + מה שסיים בשעה האחרונה, עם המצב של כל קישור
+  const runJobs = currentRun(filteredJobs, now);
+
   const activeJobs = filteredJobs
     .filter(j => 
       !j.is_archived && 
@@ -210,6 +238,7 @@ const JobDashboard = () => {
                 activeJobs={activeJobs}
                 appliedJobs={appliedJobs}
                 pendingJobs={pendingJobs}
+                runJobs={runJobs}
                 onAction={handleCardAction}
                 onDelete={handleDeleteJob}
                 onUpdateStatus={handleUpdateApplicationStatus}

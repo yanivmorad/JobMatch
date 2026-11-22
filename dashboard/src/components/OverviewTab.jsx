@@ -30,15 +30,20 @@ import { isFailed, isProcessing } from '../constants/jobStatus';
 const OverviewTab = ({
   activeJobs,
   appliedJobs, 
-  pendingJobs, 
-  onSwitchTab, 
+  pendingJobs,
+  runJobs = [],
+  onSwitchTab,
   onAction, 
   onDelete,
   onUpdateStatus,
   onRetry
 }) => {
-  // Statistics
-  const analysisCount = pendingJobs.length;
+  // Separation of pending jobs (FAILED_RESOLVE / DUPLICATE נספרו קודם כ"בעיבוד")
+  const failedJobs = pendingJobs.filter(j => isFailed(j.status));
+  const processingJobs = pendingJobs.filter(j => isProcessing(j.status));
+
+  // Statistics ("משרות בניתוח" ספר קודם גם משרות שנכשלו)
+  const analysisCount = processingJobs.length;
   const submissionsThisWeek = appliedJobs.filter(j => {
     const appliedDate = new Date(j.updated_at || j.analyzed_at);
     const oneWeekAgo = new Date();
@@ -48,14 +53,10 @@ const OverviewTab = ({
   
   const highMatchCount = activeJobs.filter(j => j.suitability_score >= 85).length;
 
-  // Separation of pending jobs (FAILED_RESOLVE / DUPLICATE נספרו קודם כ"בעיבוד")
-  const failedJobs = pendingJobs.filter(j => isFailed(j.status));
-  const processingJobs = pendingJobs.filter(j => isProcessing(j.status));
-
   // Recent data subsets
   const recommendedJobs = activeJobs.slice(0, 3);
   const recentApplied = appliedJobs.slice(0, 5);
-  const activeQueue = processingJobs.slice(0, 4);
+  // הניטור מציג את כל הקישורים של הריצה (קודם: רק 4 ראשונים בעיבוד, ומשרה שסיימה נעלמה)
 
   return (
     <div className="flex flex-col gap-8 animate-in fade-in duration-500 pb-20">
@@ -198,8 +199,10 @@ const OverviewTab = ({
                 </div>
               )}
 
-              <ActiveQueueList 
-                activeQueue={activeQueue} 
+              <ActiveQueueList
+                activeQueue={runJobs}
+                showSummary
+                onRetry={onRetry}
               />
             </div>
 
