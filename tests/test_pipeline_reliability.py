@@ -128,6 +128,9 @@ def _pool(analyzer, limiter=None):
 
 
 async def _ai_job(url="https://jobs.example/ai"):
+    from services.profile_service import set_profile
+
+    await set_profile("resume", "Full Stack Developer: React, Python, SQL")
     await add_new_job(url, manual_text="Requirements: SQL. Experience: 2 years.")
     return url
 
@@ -203,3 +206,35 @@ async def test_queue_snapshot_version_changes_on_updates(db):
     second = await queue_snapshot()
     assert second["counts"] == {"COMPLETED": 1}
     assert second["version"] != first["version"]
+
+
+async def test_missing_resume_fails_with_a_clear_message_without_calling_the_ai(db, monkeypatch):
+    from services import profile_service
+
+    monkeypatch.setattr(profile_service, "_initial_content", lambda key: None)  # אין קובץ / env
+    url = "https://jobs.example/no-cv"
+    await add_new_job(url, manual_text="Requirements: SQL. Experience: 2 years.")
+    analyzer = _Analyzer(VALID)
+    await worker_manager.analyze_next(_pool(analyzer))
+    row = await get_job_by_url(url)
+    assert analyzer.calls == 0
+    assert "אין קורות חיים" in row["error_log"]
+
+
+async def test_removed_model_is_disabled_and_the_next_model_takes_the_job(db):
+    from engine import ModelUnavailableError
+
+    url = await _ai_job()
+    gone = _Analyzer(ModelUnavailableError("gemini-old: HTTP 404"))
+    gone.model_name = "gemini-old"
+    good = _Analyzer(VALID)
+    pool = ModelPool([(gone, AIRateLimiter("gemini-old", rpm=0, rpd=0)), (good, _limiter())])
+
+    await worker_manager.analyze_next(pool)  # המודל הראשון מחזיר 404
+    row = await get_job_by_url(url)
+    assert row["status"] == "WAITING_FOR_AI" and row["retry_count"] == 0  # לא נספר ככישלון
+    assert pool.members[0][1].available_at() is not None  # המודל מושבת
+
+    await worker_manager.analyze_next(pool)  # עובר למודל הבא
+    assert (await get_job_by_url(url))["status"] == "COMPLETED"
+    assert gone.calls == 1 and good.calls == 1

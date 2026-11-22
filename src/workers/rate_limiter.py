@@ -155,6 +155,11 @@ class AIRateLimiter:
         self._pause(until, reason)
         return self.paused_until
 
+    def disable_for(self, seconds: float, reason: str) -> datetime:
+        """למשל מודל שהוסר (404): לא משתמשים בו עד שיעבור הזמן."""
+        self._pause(self._now() + timedelta(seconds=seconds), reason)
+        return self.paused_until
+
     def _pause(self, until: datetime, reason: str) -> None:
         if not self.paused_until or until > self.paused_until:
             self.paused_until, self.pause_reason = until, reason

@@ -20,7 +20,10 @@ load_dotenv()
 
 logger = logging.getLogger("Engine")
 
-DEFAULT_MODEL = "gemini-2.5-flash-lite"
+# שרשרת ברירת המחדל. המכסה היומית החינמית היא לכל מודל (נמדד 22/11/2026: 20 ביום ל-
+# 2.5-flash-lite; 3.5-flash-lite עבר 40 בלי 429). הראשון: מהיר (~2.5s) ועקבי (פער עד 10).
+DEFAULT_MODELS = ("gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-3-flash-preview")
+DEFAULT_MODEL = DEFAULT_MODELS[0]
 REQUEST_TIMEOUT = 60
 # ניסיונות נוספים כשהתשובה לא עומדת בסכמה (JSON שבור / שדה חסר / ציון מחוץ לטווח)
 VALIDATION_ATTEMPTS = 2
@@ -41,6 +44,13 @@ class TransientAIError(AIError):
 
 class InvalidAIResponse(AIError):
     """התשובה לא עמדה בסכמה גם אחרי VALIDATION_ATTEMPTS ניסיונות."""
+
+
+class ModelUnavailableError(AIError):
+    """
+    המודל לא קיים / הוסר (404) - לא תקלה של המשרה. ה-worker משבית את המודל לזמן מה,
+    מחזיר את המשרה לתור ועובר למודל הבא בשרשרת (מודלי preview נעלמים מדי פעם).
+    """
 
 
 class RateLimitError(AIError):
@@ -159,6 +169,8 @@ def build_prompt(resume: str, context: str, job_data: Dict[str, Any]) -> str:
   "formatted_message": "הודעה אישית קצרה למועמד שמסכמת למה כדאי/לא כדאי להגיש. אם שם המועמד מופיע בקורות החיים או בהקשר - פנה אליו בשמו"
 }}
 אם שם החברה או שם התפקיד לא מופיעים בתיאור המשרה ולא בפרטים הידועים - החזר עבורם "לא צוין". אל תמציא.
+אם בהקשר/העדפות (סעיף 2) יש כללי סינון, ניקוד או המלצה - הם קובעים את suitability_score,
+acceptance_probability, showstoppers ו-recommendation, וגוברים על ההוראות הכלליות כאן.
 """
 
 
@@ -203,7 +215,8 @@ def configured_models() -> List[str]:
     if chain:
         return list(dict.fromkeys(chain))
     # "or" ולא ברירת מחדל של getenv: שורה ריקה ב-.env (GEMINI_MODEL=) מגיעה כ-""
-    return [(os.getenv("GEMINI_MODEL") or "").strip() or DEFAULT_MODEL]
+    single = (os.getenv("GEMINI_MODEL") or "").strip()
+    return [single] if single else list(DEFAULT_MODELS)
 
 
 class JobAnalyzer:
@@ -247,7 +260,9 @@ class JobAnalyzer:
                 detail = ((response.json() or {}).get("error") or {}).get("message", "")
             except Exception:
                 detail = ""
-            logger.error(f"❌ Gemini HTTP {status}: {detail[:200]}")
+            logger.error(f"❌ Gemini HTTP {status} ({self.model_name}): {detail[:200]}")
+            if status == 404:
+                raise ModelUnavailableError(f"{self.model_name}: HTTP 404 {detail[:150]}")
             raise AIError(f"Gemini HTTP {status}: {detail[:200]}")
 
         data = response.json()

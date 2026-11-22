@@ -270,3 +270,23 @@ def test_long_description_is_condensed_before_sending(analyzer, monkeypatch):
     assert "experience with tool 39" in prompt
     assert "https://site/" not in prompt
     assert len(prompt) < 3000 + 2000  # תיאור מקוצר + תבנית הפרומפט
+
+
+def test_removed_model_404_is_its_own_error(analyzer, monkeypatch):
+    from engine import ModelUnavailableError
+
+    _sequence(monkeypatch, _Resp(404, {"error": {"message": "models/x is not found for API version v1beta"}}))
+    with pytest.raises(ModelUnavailableError):
+        analyzer.analyze("cv", "ctx", _JOB)
+
+
+def test_default_is_a_model_chain(monkeypatch):
+    monkeypatch.delenv("GEMINI_MODELS", raising=False)
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    assert engine.configured_models() == list(engine.DEFAULT_MODELS)
+    assert len(engine.DEFAULT_MODELS) >= 2
+
+
+def test_prompt_lets_the_personal_context_rules_win():
+    prompt = build_prompt("cv", "Hard filters: reject student positions", {"full_description": "d"})
+    assert "גוברים על ההוראות הכלליות" in prompt

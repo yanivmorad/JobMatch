@@ -41,17 +41,17 @@ from scraper_service.resolvers import (
     is_hiremetech,
 )
 from scraper_service.utils import failure_message
-from services.file_utils import CONTEXT_PATH, RESUME_PATH, read_text_file
+from services.profile_service import get_profile
 from services.link_extractor import normalize_job_url
 from workers.queue_signal import IdleWaiter, notify
 from workers.rate_limiter import AIRateLimiter, ModelPool
 
 # טיפול גמיש בייבוא מנועים
 try:
-    from engine import JobAnalyzer, RateLimitError, configured_models
+    from engine import JobAnalyzer, ModelUnavailableError, RateLimitError, configured_models
     from scraper_service.scraper import Scraper
 except ImportError:
-    from src.engine import JobAnalyzer, RateLimitError, configured_models
+    from src.engine import JobAnalyzer, ModelUnavailableError, RateLimitError, configured_models
     from src.scraper_service.scraper import Scraper
 
 logger = logging.getLogger("Workers")
@@ -61,6 +61,8 @@ RESOLVE_TIMEOUT_SECONDS = 60
 SCRAPE_TIMEOUT_SECONDS = 90
 AI_TIMEOUT_SECONDS = 150  # עד 2 בקשות (retry על סכמה) של עד 60 שניות כל אחת
 LOOP_ERROR_MAX_BACKOFF = 60
+# מודל שהחזיר 404 (הוסר / לא קיים) מושבת לזמן הזה, והשרשרת ממשיכה לבא
+MODEL_UNAVAILABLE_SECONDS = 6 * 60 * 60
 
 
 def max_attempts() -> int:
@@ -201,8 +203,12 @@ async def analyze_next(pool: ModelPool) -> bool:
     job_id, url = job["id"], job.get("url", "No URL")
     logger.info(f"🧠 [ID {job_id}] AI ({analyzer.model_name}): starting analysis for {url}")
 
-    resume = read_text_file(RESUME_PATH)
-    context = read_text_file(CONTEXT_PATH)
+    resume = await get_profile("resume")
+    context = await get_profile("context")
+    if not resume:
+        await fail_or_retry(job_id, "WAITING_FOR_AI", "FAILED_ANALYSIS",
+                            "אין קורות חיים בפרופיל - הוסף אותם בלשונית הפרופיל", max_attempts())
+        return True
     await limiter.record_request()
     try:
         result = await asyncio.wait_for(
@@ -212,6 +218,11 @@ async def analyze_next(pool: ModelPool) -> bool:
     except RateLimitError as e:
         until = limiter.on_rate_limited(e)
         logger.warning(f"⏸️ [ID {job_id}] AI: Gemini quota hit - job back in queue, paused until {until.isoformat()}")
+        await requeue_job(job_id, "WAITING_FOR_AI")
+        return True
+    except ModelUnavailableError as e:
+        until = limiter.disable_for(MODEL_UNAVAILABLE_SECONDS, f"model unavailable: {e}"[:200])
+        logger.error(f"🚫 [ID {job_id}] AI: {e} - model disabled until {until.isoformat()}, job back in queue")
         await requeue_job(job_id, "WAITING_FOR_AI")
         return True
     except asyncio.TimeoutError:
