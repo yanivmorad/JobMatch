@@ -1,104 +1,185 @@
-# JobMatch AI 🚀
+# JobMatch
 
-**JobMatch AI** is an intelligent job application management system that automates the process of finding, analyzing, and tracking job opportunities. It uses AI to compare job descriptions with your resume and personal context to provide a compatibility score and tailored advice.
+Paste job posts the way you get them - whole WhatsApp / Telegram messages full of links - and
+JobMatch finds the job links, scrapes each posting, scores it against your resume with Google
+Gemini (free tier) and keeps everything in Postgres. A React dashboard shows the scores and
+tracks your applications.
 
-> [!IMPORTANT]
-> **Project Status: Under Construction (WIP)** 🏗️
-> This project is currently in active development. Features are being added and UI/UX improvements are ongoing.
-
----
-
-## 🌟 Key Features
-
-- **Smart Scraping**: Automatically extracts job details from URLs using Jina AI and Playwright fallback.
-- **AI Analysis**: Powered by Google Gemini (`gemini-2.5-flash-lite`) to analyze job fit based on your unique profile.
-- **Suitability Scoring**: Get an instant 0-100% score for every job.
-- **Gap Analysis**: identifies exactly what's missing in your profile for a specific role.
-- **Actionable Feedback**: Direct messages and recommendations on whether to apply.
-- **Interactive Dashboard**: A modern React-based interface to manage your active jobs and history.
-
----
-
-## 🛠️ Technology Stack
-
-### Backend
-- **Framework**: FastAPI (Python)
-- **AI Engine**: Google Gemini API
-- **Scraper**: Jina AI + Playwright
-- **Database**: Local JSON-based storage (for speed and simplicity)
-
-### Frontend
-- **Framework**: React.js (via Vite)
-- **Styling**: Tailwind CSS
-- **Icons**: Lucide React
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-- Python 3.10+
-- Node.js & npm
-- API Keys for Google Gemini and Jina AI
-
-### 1. Backend Setup
-1. Navigate to the `src` directory:
-   ```bash
-   cd src
-   ```
-2. Create and activate a virtual environment:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. Create a `.env` file in the `src` directory:
-   ```env
-   GEMINI_API_KEY=your_gemini_key
-   JINA_API_KEY=your_jina_key
-   ```
-5. Run the server:
-   ```bash
-   python server.py
-   ```
-
-### 2. Frontend Setup
-1. Navigate to the `dashboard` directory:
-   ```bash
-   cd dashboard
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Start the development server:
-   ```bash
-   npm run dev
-   ```
-
----
-
-## 📁 Project Structure
-
-```text
-JobMatch/
-├── dashboard/          # React Frontend (Vite)
-├── src/
-│   ├── routes/         # API Endpoints
-│   ├── services/       # Business Logic (Scraping, Processing)
-│   ├── models/         # Data Structures (Pydantic)
-│   ├── db/             # JSON Database management
-│   ├── engine.py       # AI Analysis Engine
-│   ├── scraper.py      # Web Scraping Logic
-│   └── server.py       # FastAPI Entry Point
-├── data/               # User data (Resume, Context)
-└── results.json        # Stored job analyses (Local DB)
+```
+raw message text
+   │  POST /api/jobs/raw   (link extraction: drops app-store / group / non-job links, utm, duplicates)
+   ▼
+PENDING_RESOLVE ──resolver──▶ WAITING_FOR_SCRAPE ──scraper──▶ WAITING_FOR_AI ──AI──▶ COMPLETED
+   (HireMeTech → company site)   (ATS API / Jina / Playwright)   (Gemini, model chain)   score + analysis in the DB
 ```
 
----
+The three workers run inside the API process and use the `jobs` table as a queue
+(`FOR UPDATE SKIP LOCKED`). Failures end in `FAILED_RESOLVE` / `FAILED_SCRAPE` /
+`FAILED_ANALYSIS` / `NO_DATA` (closed job, login wall...) / `DUPLICATE`, each with a message in
+`error_log` that the dashboard shows.
 
-## 📝 License
-This project is for personal use. All rights reserved.
+## Running locally
+
+### With Docker (everything, on an empty database)
+
+```bash
+cp .env.example .env          # fill in GEMINI_API_KEY, JINA_API_KEY (HIRE_ME_TECH_TOKEN optional)
+docker compose up --build
+```
+
+Open http://localhost:8000 - the server serves the dashboard too. Postgres runs in the `db`
+container (exposed on `127.0.0.1:5434`); the schema is created on start-up. Your resume and
+personal context are read once from `data/resume.txt` and `data/Personal Context.txt` (or the
+`RESUME_TEXT` / `PERSONAL_CONTEXT_TEXT` env vars) and then live in the database - edit them in
+the Profile tab.
+
+### Without Docker
+
+Python 3.12 recommended (3.10 works), Node 22, a Postgres 12+.
+
+```bash
+python -m venv .venv && .venv/Scripts/activate      # Linux/macOS: source .venv/bin/activate
+pip install -r requirements-dev.txt
+playwright install chromium                          # browser for the scraper fallback / HireMeTech
+run_server.bat                                       # or: python -m uvicorn src.server:app --reload
+cd dashboard && npm ci && npm run dev                # http://localhost:5173 (talks to :8000)
+```
+
+### Tests
+
+```bash
+docker compose up -d db
+docker compose exec db createdb -U jobmatch jobmatch_test      # once
+# .env: TEST_DATABASE_URL=postgresql://jobmatch:jobmatch@127.0.0.1:5434/jobmatch_test
+pytest
+```
+
+DB tests are skipped without `TEST_DATABASE_URL` (its database name must contain `test`: the
+tests drop the schema). Use `127.0.0.1`, not `localhost`, on Windows.
+
+### Checking the scraper and the AI on real data
+
+```bash
+python scripts/test_scraper.py data/links.txt     # resolve + scrape, no AI; table per site
+python scripts/test_analysis.py --runs 2          # AI on scraped jobs, twice each: validity + score spread
+```
+
+Reports go to `logs/`.
+
+## Configuration
+
+See `.env.example` for every variable. The important ones:
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | Postgres connection string (Neon/Supabase). Or `PG_*` locally. |
+| `GEMINI_API_KEY` | Google AI Studio key (free tier). |
+| `JINA_API_KEY` | Jina Reader key (scraper). |
+| `API_TOKEN` | Shared secret: every `/api/*` call needs `Authorization: Bearer <token>`. Unset = open API (local only). |
+| `HIRE_ME_TECH_TOKEN` | `auth_token` from hiremetech.com localStorage. Expires after **7 days**; without a valid one HireMeTech jobs are analyzed from the public page (no company name). |
+| `GEMINI_MODEL` / `GEMINI_MODELS` | One model, or a chain. Default chain: `gemini-3.5-flash-lite, gemini-2.5-flash-lite, gemini-3-flash-preview`. |
+| `GEMINI_RPM` / `GEMINI_RPD` | Local rate limit (default 10/min, no daily cap). |
+| `ENABLE_PLAYWRIGHT` | `false` = no browser (saves ~300 MB RAM). |
+| `IDLE_POLL_MAX_SECONDS` | Safety-net queue polling when idle (default 3600). |
+| `RESUME_TEXT`, `PERSONAL_CONTEXT_TEXT` (or `*_FILE`) | Seed the profile on first run. |
+
+The personal context file is part of the prompt and its rules win: hard filters (student
+roles, mandatory degree...), scoring tiers and how to judge the chance of an interview.
+
+## API (for the dashboard and future bots)
+
+| Endpoint | |
+|---|---|
+| `POST /api/jobs/raw` `{text}` | Extract job links from raw text and queue them. Returns `added_jobs: [{id, url}]`, `skipped_urls` (existing jobs, with `id`) and `ignored` (non-job links with a reason). |
+| `POST /api/jobs/extract-links` `{text}` | Preview only, nothing saved. |
+| `GET /api/jobs/{id}` | One job: `status`, `suitability_score`, `recommendation`, `showstoppers`, `model`... |
+| `GET /api/results` | All jobs. |
+| `GET /api/jobs/queue` | Counts per status + a version (cheap polling) + whether the AI is paused by the quota. |
+| `POST /api/jobs/text` | A job pasted as text (skips scraping). |
+| `POST /api/jobs/retry?url=` | Retry from the failed stage. |
+| `GET/POST /api/profile/resume`, `/api/profile/context` | The profile (stored in the DB). |
+| `GET /health` | DB, workers, AI quota state, HireMeTech token expiry. 503 when degraded. |
+| `GET /ping` | Liveness without touching the DB (for health checks / keep-alive). |
+
+A bot only needs `POST /api/jobs/raw` with the message text and then `GET /api/jobs/{id}` until
+the status is `COMPLETED` (or a failure status).
+
+## Limits of the free services (checked 2026-11-22)
+
+**Gemini.** Google does not publish the per-model free-tier numbers in its docs - they are shown
+in AI Studio (https://aistudio.google.com/rate-limit) and are per project, per model; daily
+quotas reset at midnight Pacific. Measured from Gemini's own 429:
+`GenerateRequestsPerDayPerProjectPerModel-FreeTier = 20` for `gemini-2.5-flash-lite`.
+`gemini-3.5-flash-lite` handled 40+ requests the same day without a 429. Free-tier prompts may
+be used by Google to improve its products. What JobMatch does about it:
+- a model chain: when a model's daily quota is used up, the next model takes over, and the
+  first one comes back after the reset; each analysis records its `model`, because different
+  models score differently (the same job got 60-88 across four models);
+- a 429 never fails a job: it goes back to the queue and the AI pauses (until midnight Pacific
+  for a daily quota); the dashboard shows a banner with the resume time;
+- the job description is cleaned and cut to `MAX_DESCRIPTION_CHARS` (8000) - about half the
+  tokens on real postings;
+- `GEMINI_RPM` (10) spaces the requests.
+
+**Jina Reader** (jina.ai/reader): a new key gets 10M free tokens. The same page lists 500 RPM for
+a free key in its table and 100 RPM in its FAQ. JobMatch sends a few requests per job.
+
+**Render (free web service).** 0.1 CPU / 512 MB, an ephemeral disk, 750 free instance hours per
+workspace per month, and it **spins down after 15 minutes without inbound HTTP traffic**
+(about a minute to wake up). While it sleeps the workers don't run - queued jobs wait until the
+next request wakes it. Render's docs also say it may suspend a free service that generates an
+unusually high volume of outbound traffic (JobMatch makes a handful of requests per job).
+
+**Neon (free).** 1 GB storage per project, 100 CU-hours per project per month (400 h at the
+smallest 0.25 CU), the compute scales to zero after 5 min without queries (suspended time is
+free), 5 GB egress, and no deletion for inactivity. JobMatch is built to let it sleep: workers
+are woken by new jobs instead of polling, idle polling is hourly, and `/ping` doesn't query.
+
+**Supabase (free)** would also work (500 MB database), but free projects are **paused after one
+week of inactivity**. **Render's free Postgres** is deleted 30 days after creation.
+
+## Deploying (Render + Neon)
+
+1. Create a Neon project and copy its connection string (the direct one, or the `-pooler` one -
+   both work).
+2. Render: New → Blueprint → this repository. `render.yaml` creates one Docker web service.
+   Fill in `DATABASE_URL`, `GEMINI_API_KEY`, `JINA_API_KEY`, `RESUME_TEXT`,
+   `PERSONAL_CONTEXT_TEXT` (and `HIRE_ME_TECH_TOKEN` if you have one). Render generates
+   `API_TOKEN`; copy it from the service's Environment page - the dashboard asks for it once.
+   Render's docs don't say explicitly whether Docker services may use the free instance type;
+   if the Blueprint is refused, pick `starter`.
+3. Open `https://<service>.onrender.com`. `/health` should report `"status": "ok"`.
+
+Instead of `RESUME_TEXT`, you can add Render *secret files* named `resume.txt` and
+`personal_context.txt` (mounted at `/etc/secrets/`).
+
+### Keeping it awake (optional)
+
+On the free plan the service sleeps after 15 minutes without requests. To keep the workers
+running, ping `https://<service>.onrender.com/ping` every 10-14 minutes from an external
+scheduler:
+- **cron-job.org** - free (donation-funded), down to once a minute;
+- **UptimeRobot** - free plan: 50 monitors, 5-minute interval, commercial use allowed.
+
+Cost: $0. Trade-offs: one always-on service uses ~744 of the 750 free Render hours per month,
+so there is nothing left for other free services in the same workspace; and Neon is unaffected
+because `/ping` doesn't touch the database. Without the ping, things still work - jobs just
+wait until the next visit or message wakes the service (~1 minute). The alternative is Render's
+paid `starter` instance (0.5 CPU / 512 MB, no spin-down) - its price was not on the Render docs
+pages checked; see the pricing page.
+
+## Project layout
+
+```
+src/
+  server.py               FastAPI app: /api, /health, /ping, serves dashboard/dist
+  workers/                resolver / scraper / AI / maintenance loops, rate limiter, wake-ups
+  engine.py               Gemini call, prompt, response schema (Pydantic)
+  scraper_service/        resolvers (HireMeTech), Jina + Playwright scraper, ATS APIs, validation
+  services/               link extraction, intake, description condensing, profile, auth
+  db/                     schema (idempotent migrations) and queries
+  routes/                 API routes
+dashboard/                React + Vite + Tailwind
+scripts/                  test_scraper.py, test_analysis.py
+tests/                    pytest (DB tests need TEST_DATABASE_URL)
+```

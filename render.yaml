@@ -1,0 +1,42 @@
+# Render Blueprint: one Docker web service (API + workers + dashboard).
+# The database is external (Neon / Supabase): Render's free Postgres is deleted 30 days
+# after creation (+14 days grace), see README "Deploying".
+#
+# Create: Render dashboard -> New -> Blueprint -> pick this repo. Render asks once for every
+# "sync: false" value (it ignores them on later Blueprint syncs - change them in the dashboard).
+services:
+  - type: web
+    name: jobmatch
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # free = 0.1 CPU / 512 MB, spins down after 15 min without inbound traffic (see README
+    # "Keeping it awake"). starter = 0.5 CPU / 512 MB, no spin-down (paid).
+    plan: free
+    # /ping does not touch the DB, so Render's health checks don't keep Neon awake
+    healthCheckPath: /ping
+    envVars:
+      # --- required secrets ---
+      - key: DATABASE_URL          # Neon connection string (postgresql://...?sslmode=require)
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: JINA_API_KEY
+        sync: false
+      - key: API_TOKEN             # the dashboard asks for it once; Render generates a random one
+        generateValue: true
+      # --- profile seed (only used while the DB has no profile yet; then edit it in the app) ---
+      - key: RESUME_TEXT
+        sync: false
+      - key: PERSONAL_CONTEXT_TEXT
+        sync: false
+      # --- optional ---
+      - key: HIRE_ME_TECH_TOKEN    # valid 7 days; without it HireMeTech jobs use the public page
+        sync: false
+      # 0.1 CPU is too little for Chromium: rely on the ATS APIs + Jina. Set "true" on a paid plan.
+      - key: ENABLE_PLAYWRIGHT
+        value: "false"
+      # Workers are woken by new jobs; rare polling lets Neon scale to zero (CU-hours)
+      - key: IDLE_POLL_MAX_SECONDS
+        value: "3600"
+      - key: GEMINI_RPM
+        value: "10"
