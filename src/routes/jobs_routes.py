@@ -10,6 +10,7 @@ from db.jobs_repository import (
     delete_job_by_url,
     find_existing_job,
     get_all_jobs,
+    get_job_by_id,
     manual_update_job_content,
     queue_snapshot,
     update_application_status,
@@ -35,6 +36,18 @@ router = APIRouter(tags=["jobs"])
 async def get_jobs():
     """שליפת כל המשרות מה-SQL"""
     return await get_all_jobs()
+
+
+@router.get("/jobs/{job_id:int}")
+async def get_job(job_id: int):
+    """
+    משרה אחת: סטטוס, ציון וניתוח. לערוצים כמו בוט: שולחים הודעה ל-/jobs/raw, מקבלים
+    added_jobs עם id, ושואלים כאן עד ש-status הוא COMPLETED (או סטטוס כישלון).
+    """
+    job = await get_job_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 @router.get("/jobs/queue")

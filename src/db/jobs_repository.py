@@ -59,32 +59,32 @@ def _applied_at_sql(status_param: str, stages_param: str = "$5") -> str:
 
 async def add_new_job(
     url: str, source: str = "web", manual_text: str = None, manual_meta: dict = None
-) -> bool:
+) -> Optional[int]:
     """
     נקודת הכניסה הראשית למשרה במערכת.
     יכולת: מחליטה אם לשלוח את המשרה לפיענוח לינק (PENDING_RESOLVE)
     או ישירות לניתוח AI (WAITING_FOR_AI) אם הטקסט כבר קיים.
+    מחזיר את ה-id של המשרה החדשה, או None אם כבר קיימת (כך שאפשר להמשיך להשתמש בו כ-bool).
     """
     pool = await get_pool()
     status = "WAITING_FOR_AI" if manual_text else "PENDING_RESOLVE"
     company = (manual_meta or {}).get("company", url)
     title = (manual_meta or {}).get("title", url)
 
-    async with pool.acquire() as conn:
-        result = await conn.execute(
-            """
-            INSERT INTO jobs (url, source_url, status, source, full_description, company, job_title)
-            VALUES ($1, $1, $2, $3, $4, $5, $6)
-            ON CONFLICT (url) DO NOTHING
-            """,
-            url,
-            status,
-            source,
-            manual_text,
-            company,
-            title,
-        )
-        return " 1" in result
+    return await pool.fetchval(
+        """
+        INSERT INTO jobs (url, source_url, status, source, full_description, company, job_title)
+        VALUES ($1, $1, $2, $3, $4, $5, $6)
+        ON CONFLICT (url) DO NOTHING
+        RETURNING id
+        """,
+        url,
+        status,
+        source,
+        manual_text,
+        company,
+        title,
+    )
 
 
 async def fetch_next_job(current_status: str, next_status: str) -> Optional[dict]:
@@ -341,28 +341,29 @@ async def get_all_jobs() -> List[dict]:
     לוגיקה: הופכת את ה-JSON של הניתוח לשדות שטוחים (כמו score, summary) כדי להקל על ה-Frontend.
     """
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT * FROM jobs ORDER BY created_at DESC")
-        results = []
-        for row in rows:
-            job = dict(row)
-            analysis = job.get("analysis_result")
-            if analysis:
-                if isinstance(analysis, str):
-                    try:
-                        analysis = json.loads(analysis)
-                    except:
-                        analysis = {}
-                if isinstance(analysis, dict):
-                    job.update(
-                        {
-                            k: v
-                            for k, v in analysis.items()
-                            if k not in _PROTECTED_FIELDS
-                        }
-                    )
-            results.append(job)
-        return results
+    rows = await pool.fetch("SELECT * FROM jobs ORDER BY created_at DESC")
+    return [_flatten(row) for row in rows]
+
+
+def _flatten(row) -> dict:
+    """שורת jobs -> dict, כשהשדות של analysis_result שטוחים (score, summary...) - כמו ב-get_all_jobs."""
+    job = dict(row)
+    analysis = job.get("analysis_result")
+    if isinstance(analysis, str):
+        try:
+            analysis = json.loads(analysis)
+        except ValueError:
+            analysis = None
+    if isinstance(analysis, dict):
+        job.update({k: v for k, v in analysis.items() if k not in _PROTECTED_FIELDS})
+    return job
+
+
+async def get_job_by_id(job_id: int) -> Optional[dict]:
+    """משרה אחת עם תוצאת הניתוח (לבוט: מעקב אחרי משרה שנשלחה עד שיש ציון)."""
+    pool = await get_pool()
+    row = await pool.fetchrow("SELECT * FROM jobs WHERE id = $1", job_id)
+    return _flatten(row) if row else None
 
 
 async def get_job_by_url(url: str) -> Optional[dict]:

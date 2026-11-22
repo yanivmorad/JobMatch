@@ -22,6 +22,7 @@ def _scan_date(job: dict) -> str:
 
 def duplicate_info(url: str, existing: dict) -> dict:
     return {
+        "id": existing.get("id"),
         "url": url,
         "date": _scan_date(existing),
         "company": existing.get("company") or "Unknown",
@@ -30,7 +31,11 @@ def duplicate_info(url: str, existing: dict) -> dict:
 
 
 async def ingest_urls(urls: Iterable[str], source: str = "web") -> dict:
-    added_urls, skipped_urls, seen = [], [], set()
+    """
+    added_jobs: [{id, url}] - ערוץ כמו בוט שומר את ה-id-ים ושואל GET /api/jobs/{id} עד שיש ציון.
+    skipped_urls כוללים את ה-id של המשרה הקיימת (אפשר להחזיר מיד את הציון שכבר קיים).
+    """
+    added_jobs, skipped_urls, seen = [], [], set()
     for raw in urls:
         url = normalize_job_url(raw)
         if not url.startswith(("http://", "https://")) or url in seen:
@@ -38,19 +43,21 @@ async def ingest_urls(urls: Iterable[str], source: str = "web") -> dict:
         seen.add(url)
 
         existing = await find_existing_job(url)
-        if existing is None and await add_new_job(url, source=source):
-            added_urls.append(url)
+        job_id = await add_new_job(url, source=source) if existing is None else None
+        if job_id:
+            added_jobs.append({"id": job_id, "url": url})
             continue
         # קיים כבר (או נוסף במקביל ממקור אחר בין הבדיקה להכנסה)
         existing = existing or await find_existing_job(url)
         skipped_urls.append(duplicate_info(url, existing or {}))
 
-    if added_urls:
+    if added_jobs:
         notify("PENDING_RESOLVE")  # ה-resolver מתעורר מיד, בלי לחכות לבדיקה התקופתית
     return {
-        "message": f"Processed {len(added_urls) + len(skipped_urls)} jobs",
-        "added": len(added_urls),
-        "added_urls": added_urls,
+        "message": f"Processed {len(added_jobs) + len(skipped_urls)} jobs",
+        "added": len(added_jobs),
+        "added_urls": [j["url"] for j in added_jobs],
+        "added_jobs": added_jobs,
         "skipped": len(skipped_urls),
         "skipped_urls": skipped_urls,
     }
