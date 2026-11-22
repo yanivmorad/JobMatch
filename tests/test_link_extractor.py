@@ -109,3 +109,69 @@ def test_job_links_are_kept(url):
 def test_text_without_links():
     result = extract_job_links("אין פה שום קישור, רק טקסט")
     assert result.jobs == [] and result.ignored == []
+
+
+# --- כותרת המשרה מתוך ההודעה ---
+
+
+def test_titles_from_the_whatsapp_sample():
+    """שלושה פורמטים: כותרת בראש ההודעה, 'שם המשרה:' עם כמה משרות בהודעה, והדבקה צמודה לטקסט."""
+    titles = extract_job_links(SAMPLE).titles
+    assert titles == {
+        # השורה הראשונה של ההודעה, לא "פרטים מלאים והגשה בקישור:" שלפני הקישור
+        "https://hiremetech.com/job/147318715": "C# Software Developer",
+        "https://hiremetech.com/job/142860792": "Frontend Engineer – AI-Driven Data Security Platform",
+        "https://rapaport.bamboohr.com/careers/307": "Customer Success Operations Specialist - Student",
+        "https://mazebolt.com/careers-apply/co/technical-services/0F.476/junior-customer-success-manager/all": "Junior Customer Success Manager",
+        "https://hibob-fa0ad69d0cb34a.careers.hibob.com/jobs/e49599be-f624-4f28-bf2c-8fb84d01597e": "Business Development Representative (BDR)",
+        "https://job-boards.greenhouse.io/gitlab/jobs/8937825002": "Customer Success Engineer",
+        "https://www.sett.ai/careers/ai-artist/C4.57B/": "AI Artist",
+    }
+
+
+def test_title_is_the_message_line_and_the_sender_is_not_part_of_it():
+    # וואטסאפ מוסיף תווי כיווניות סביב מספר הטלפון של השולח
+    text = (
+        "[22.11, 7:43] ‏‪+972 50-000-0000‬‏: Junior Data Analyst\n\n"
+        "https://www.drsrada.com/apply?position=CA.37A&\n"
+        "[22.11, 7:43] ‏‪+972 50-000-0000‬‏: JUNIOR QA ENGINEER- MANUAL\n\n"
+        "https://cust2mate.com/open-positions/\n"
+    )
+    result = extract_job_links(text)
+    assert result.titles == {
+        "https://www.drsrada.com/apply?position=CA.37A": "Junior Data Analyst",
+        "https://cust2mate.com/open-positions/": "JUNIOR QA ENGINEER- MANUAL",
+    }
+
+
+def test_android_export_format():
+    text = "22/11/2026, 07:43 - Dana: Backend Developer\nhttps://acme.com/jobs/1\n"
+    assert extract_job_links(text).titles == {"https://acme.com/jobs/1": "Backend Developer"}
+
+
+def test_plain_list_takes_the_line_before_each_link():
+    text = "Backend Dev - https://a.com/jobs/1\nQA Engineer\nhttps://b.com/jobs/2\nhttps://c.com/jobs/3"
+    # לקישור השלישי אין כותרת משלו - לא "שואלים" את הכותרת של הקישור הקודם
+    assert extract_job_links(text).titles == {
+        "https://a.com/jobs/1": "Backend Dev",
+        "https://b.com/jobs/2": "QA Engineer",
+    }
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "https://a.com/jobs/1",  # בלי טקסט בכלל
+        "לפרטים והגשה:\nhttps://a.com/jobs/1",  # תווית בלי ערך
+        "🙌🏽\nhttps://a.com/jobs/1",  # בלי אותיות
+        "[22.11, 7:43] Dana: https://a.com/jobs/1",  # רק קישור בהודעה
+    ],
+)
+def test_no_title_is_better_than_a_wrong_one(text):
+    assert extract_job_links(text).titles == {}
+
+
+def test_ignored_links_get_no_title():
+    text = "[22.11, 7:43] Dana: האפליקציה שלנו\nhttps://apps.apple.com/il/app/x/id1\n"
+    result = extract_job_links(text)
+    assert result.jobs == [] and result.titles == {}

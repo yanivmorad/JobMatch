@@ -8,7 +8,7 @@
 (source_url), כך שמשרת HireMeTech שכבר פוענחה לאתר החברה מזוהה ככפולה.
 הוורקרים ממשיכים משם (resolve -> scrape -> AI).
 """
-from typing import Iterable
+from typing import Dict, Iterable, Optional
 
 from db.jobs_repository import add_new_job, find_existing_job
 from services.link_extractor import extract_job_links, normalize_job_url
@@ -30,11 +30,16 @@ def duplicate_info(url: str, existing: dict) -> dict:
     }
 
 
-async def ingest_urls(urls: Iterable[str], source: str = "web") -> dict:
+async def ingest_urls(
+    urls: Iterable[str], source: str = "web", titles: Optional[Dict[str, str]] = None
+) -> dict:
     """
     added_jobs: [{id, url}] - ערוץ כמו בוט שומר את ה-id-ים ושואל GET /api/jobs/{id} עד שיש ציון.
     skipped_urls כוללים את ה-id של המשרה הקיימת (אפשר להחזיר מיד את הציון שכבר קיים).
+    titles: url מנורמל -> כותרת מההודעה. נשמרת כשם המשרה ומשמשת את ה-AI כרמז
+    (חשוב כשהקישור הוא עמוד "משרות פתוחות" עם כמה משרות).
     """
+    titles = titles or {}
     added_jobs, skipped_urls, seen = [], [], set()
     for raw in urls:
         url = normalize_job_url(raw)
@@ -43,7 +48,9 @@ async def ingest_urls(urls: Iterable[str], source: str = "web") -> dict:
         seen.add(url)
 
         existing = await find_existing_job(url)
-        job_id = await add_new_job(url, source=source) if existing is None else None
+        title = titles.get(url)
+        meta = {"title": title} if title else None
+        job_id = await add_new_job(url, source=source, manual_meta=meta) if existing is None else None
         if job_id:
             added_jobs.append({"id": job_id, "url": url})
             continue
@@ -65,6 +72,6 @@ async def ingest_urls(urls: Iterable[str], source: str = "web") -> dict:
 
 async def ingest_text(text: str, source: str = "web") -> dict:
     links = extract_job_links(text)
-    result = await ingest_urls(links.jobs, source=source)
+    result = await ingest_urls(links.jobs, source=source, titles=links.titles)
     result["ignored"] = links.ignored
     return result

@@ -140,7 +140,13 @@ def build_prompt(resume: str, context: str, job_data: Dict[str, Any]) -> str:
     if title:
         known.append(f"תפקיד: {title}")
     known_block = (
-        "\n4. פרטים ידועים על המשרה (הוזנו ידנית):\n" + "\n".join(known) + "\n"
+        "\n4. פרטים ידועים על המשרה (מהמשתמש או מההודעה שבה התקבלה המשרה):\n"
+        + "\n".join(known)
+        + (
+            "\nאם התיאור מכיל כמה משרות (למשל עמוד \"משרות פתוחות\"), נתח רק את המשרה שתואמת לתפקיד הזה.\n"
+            if title
+            else "\n"
+        )
         if known
         else ""
     )

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link as LinkIcon, Send, Loader2, AlertCircle, List, Globe, Ban } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 
-const EMPTY_PREVIEW = { text: '', jobs: [], ignored: [] };
+const EMPTY_PREVIEW = { text: '', jobs: [], ignored: [], titles: {} };
 
 const SmartImportCard = ({
   rawInput,
@@ -21,7 +21,7 @@ const SmartImportCard = ({
     if (!hasText) return;
     const timer = setTimeout(() => {
       taskService.extractLinks(rawInput)
-        .then(res => setPreview({ text: rawInput, jobs: res.jobs, ignored: res.ignored }))
+        .then(res => setPreview({ text: rawInput, jobs: res.jobs, ignored: res.ignored, titles: res.titles || {} }))
         .catch(() => setPreview({ ...EMPTY_PREVIEW, text: rawInput, error: true }));
     }, 300);
     return () => clearTimeout(timer);
@@ -29,6 +29,7 @@ const SmartImportCard = ({
 
   const parsedLinks = hasText ? preview.jobs : [];
   const ignoredLinks = hasText ? preview.ignored : [];
+  const linkTitles = hasText ? preview.titles : {};
   const isChecking = hasText && preview.text !== rawInput;
   const previewError = hasText && preview.error;
 
@@ -94,10 +95,16 @@ const SmartImportCard = ({
               ) : (parsedLinks.length > 0 || ignoredLinks.length > 0) ? (
                 <div className="flex flex-wrap gap-2">
                   {parsedLinks.map((link) => (
-                    <div key={link} className="flex items-center gap-2 bg-white border border-slate-100 px-3 py-2 rounded-xl shadow-sm hover:border-blue-200 transition-colors max-w-full">
+                    <div key={link} title={link} className="flex items-center gap-2 bg-white border border-slate-100 px-3 py-2 rounded-xl shadow-sm hover:border-blue-200 transition-colors max-w-full">
                       <div className="bg-blue-50 p-1 rounded-md text-blue-500 shrink-0">
                         <Globe size={12} />
                       </div>
+                      {/* הכותרת שזוהתה בהודעה (אם יש) - כך רואים מראש איך המשרה תיקרא */}
+                      {linkTitles[link] && (
+                        <span className="text-[11px] font-bold text-slate-700 truncate shrink-0 max-w-[50%]" dir="auto">
+                          {linkTitles[link]}
+                        </span>
+                      )}
                       <span className="text-[11px] text-slate-600 font-mono truncate" dir="ltr">{link}</span>
                     </div>
                   ))}

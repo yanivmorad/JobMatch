@@ -97,7 +97,7 @@ async def add_raw_text(submission: RawTextSubmission):
 async def preview_links(submission: RawTextSubmission):
     """תצוגה מקדימה: אילו קישורים יוכנסו ואילו יסוננו - בלי לשמור כלום."""
     links = extract_job_links(submission.text)
-    return {"jobs": links.jobs, "ignored": links.ignored}
+    return {"jobs": links.jobs, "ignored": links.ignored, "titles": links.titles}
 
 
 @router.post("/jobs/text")
