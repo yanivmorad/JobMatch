@@ -290,3 +290,10 @@ def test_default_is_a_model_chain(monkeypatch):
 def test_prompt_lets_the_personal_context_rules_win():
     prompt = build_prompt("cv", "Hard filters: reject student positions", {"full_description": "d"})
     assert "גוברים על ההוראות הכלליות" in prompt
+
+
+def test_prompt_lets_the_ai_take_the_company_from_an_application_email():
+    """HireMeTech מסתיר את שם החברה, אבל בתיאור יש לפעמים מייל להגשה (jobs@giv-solutions.com)."""
+    prompt = build_prompt("cv", "ctx", {"full_description": "d"})
+    assert "jobs@acme-tech.com -> Acme Tech" in prompt
+    assert "אל תמציא" in prompt
