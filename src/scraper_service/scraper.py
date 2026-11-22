@@ -6,6 +6,7 @@ from typing import Optional
 import requests
 from dotenv import load_dotenv
 
+from scraper_service.extractors import EXTRACTORS, JobNotFoundError
 from scraper_service.utils import clean_text, is_content_valid
 
 # ניסיון ייבוא שקט של Playwright
@@ -28,21 +29,38 @@ class Scraper:
 
         # הגדרות Jina אגרסיביות יותר
         self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
             "X-Timeout": "20",  # קיצור זמן ההמתנה של Jina
             "X-With-Iframe": "true",
             "X-With-Shadow-Dom": "true",
             "X-Target-Selector": "main, article, .job-description, #job-detail",  # עוזר ל-Jina להתמקד
         }
+        if self.api_key:
+            self.headers["Authorization"] = f"Bearer {self.api_key}"
 
     def scrape(self, target_url: str, job_id: Optional[int] = None) -> Optional[dict]:
         id_tag = f"[ID {job_id}] " if job_id else ""
         start_time = time.time()
 
-        # 1. ניסיון מהיר עם Jina AI (מקסימום 20 שניות)
-        jina_result = self._try_jina(target_url, id_tag)
-        if jina_result:
-            return jina_result
+        # 0. מחלצים ייעודיים לאתרים מוכרים (Workday וכו') - הכי מהיר ונקי
+        for extractor in EXTRACTORS:
+            try:
+                result = extractor(target_url)
+            except JobNotFoundError:
+                raise  # המשרה הוסרה - אין טעם לנסות סריקה כללית
+            except Exception as e:
+                logger.warning(f"{id_tag}Scraper: {extractor.__name__} failed: {e}")
+                continue
+            if result:
+                logger.info(f"{id_tag}Scraper: {extractor.__name__} success")
+                return result
+
+        # 1. ניסיון מהיר עם Jina AI (מקסימום 20 שניות). Jina דורש מפתח API
+        if self.api_key:
+            jina_result = self._try_jina(target_url, id_tag)
+            if jina_result:
+                return jina_result
+        else:
+            logger.info(f"{id_tag}Scraper: JINA_API_KEY not set, skipping Jina")
 
         # בדיקה כמה זמן נשאר לנו (לפני שהוורקר הורג אותנו ב-60 שניות)
         elapsed = time.time() - start_time

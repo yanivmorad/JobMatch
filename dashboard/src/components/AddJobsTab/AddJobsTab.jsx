@@ -73,7 +73,7 @@ const AddJobsTab = ({ pendingJobs, onJobAdded }) => {
               duplicateJobs={duplicateJobs}
               setDuplicateJobs={setDuplicateJobs}
               submitStatus={submitStatus}
-              onSubmit={(parsedLinks) => handleUrlSubmit(parsedLinks, () => setRawInput(''))}
+              onSubmit={(parsedLinks, titles) => handleUrlSubmit(parsedLinks, () => setRawInput(''), titles)}
             />
 
             <ManualInputCard 

@@ -1,5 +1,6 @@
 # src/routes/jobs_routes.py
 import logging
+import re
 import uuid
 
 from fastapi import APIRouter, Body, HTTPException
@@ -28,6 +29,13 @@ from models.job_models import (
 logger = logging.getLogger("JobMatchServer")
 router = APIRouter(tags=["jobs"])
 
+_TRAILING_JUNK = re.compile(r"[.,;:!)\]}>'\"?&#]+$")
+
+
+def normalize_url(url: str) -> str:
+    """מנקה רווחים ותווים שנדבקו לסוף הלינק (למשל '?' או '&' ריקים מוואטסאפ)."""
+    return _TRAILING_JUNK.sub("", url.strip())
+
 
 @router.get("/results")
 async def get_jobs():
@@ -41,10 +49,11 @@ async def add_url_jobs(submission: JobSubmission):
     added = 0
     skipped = 0
     skipped_urls = []  # רשימת לינקים שדולגו
+    titles = {normalize_url(u): t.strip() for u, t in (submission.titles or {}).items() if t and t.strip()}
 
     # בדיקת כפילות ללינקים בודדים - דרישת משתמש
     if len(submission.urls) == 1:
-        url = submission.urls[0].strip()
+        url = normalize_url(submission.urls[0])
         existing = await get_job_by_url(url)
         if existing:
             original_date = existing.get("analyzed_at") or existing.get("created_at")
@@ -61,9 +70,14 @@ async def add_url_jobs(submission: JobSubmission):
             )
 
     for url in submission.urls:
-        clean_url = url.strip()
+        clean_url = normalize_url(url)
         if clean_url:
-            was_added = await add_new_job(clean_url, source="extension")
+            title = titles.get(clean_url)
+            was_added = await add_new_job(
+                clean_url,
+                source="extension",
+                manual_meta={"title": title} if title else None,
+            )
             if was_added:
                 added += 1
             else:

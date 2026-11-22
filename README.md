@@ -48,6 +48,10 @@ Manual text ──────────────────────�
 Failures: FAILED_RESOLVE / FAILED_SCRAPE / NO_DATA / FAILED_ANALYSIS / DUPLICATE
 ```
 
+Scraping order: site-specific extractors first (Workday jobs are read from Workday's public JSON API), then Jina AI (only when `JINA_API_KEY` is set), then a local Playwright browser. Bot-protection pages (e.g. Cloudflare "Just a moment...") are detected and marked `NO_DATA` so you can paste the job text manually.
+
+When pasting text with several links (e.g. a WhatsApp message), the line before each link is used as the job title hint.
+
 A maintenance worker runs hourly and marks applications with no response for 30+ days as "ghosted".
 
 ---

@@ -14,8 +14,24 @@ def is_content_valid(text: str) -> bool:
     """
     if not text or len(text) < 150:
         return False
-    invalid_markers = ["access denied", "robot check", "captcha", "404 not found"]
-    return not any(marker in text.lower() for marker in invalid_markers)
+    invalid_markers = [
+        "access denied",
+        "robot check",
+        "captcha",
+        "404 not found",
+        # דפי הגנה מבוטים (Cloudflare ודומיו) - נראים כמו תוכן אבל אין בהם משרה
+        "performing security verification",
+        "verify you are human",
+        "checking your browser",
+        "enable javascript and cookies to continue",
+    ]
+    lowered = text.lower()
+    if any(marker in lowered for marker in invalid_markers):
+        return False
+    # "Just a moment..." של Cloudflare - רק כשהעמוד קצר (כדי לא לפסול משרה אמיתית)
+    if "just a moment" in lowered and len(text.split()) < 150:
+        return False
+    return True
 
 
 def clean_text(text: str) -> str:

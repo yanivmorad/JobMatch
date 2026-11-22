@@ -11,6 +11,7 @@ from db.jobs_repository import (
     reset_stuck_jobs,
     update_job_after_resolution,
 )
+from scraper_service.extractors import JobNotFoundError
 from scraper_service.resolvers import URLResolver  # ייבוא ישיר
 from services.file_utils import CONTEXT_PATH, RESUME_PATH, read_text_file
 
@@ -138,6 +139,9 @@ async def scrape_worker():
                         job_id, "NO_DATA", "הסורק לא הצליח לחלץ תיאור משרה"
                     )
 
+            except JobNotFoundError as e:
+                logger.warning(f"🗑️ [ID {job_id}] Scraper: job not found for {url}")
+                await mark_failed(job_id, "NO_DATA", str(e))
             except asyncio.TimeoutError:
                 logger.error(f"⏲️ [ID {job_id}] Scraper timeout (60s) for {url}")
                 await mark_failed(

@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Link as LinkIcon, Send, Loader2, AlertCircle, List, Globe, Hash } from 'lucide-react';
+import { parseJobLinks } from '../../utils/linkParser';
 
 const SmartImportCard = ({ 
   rawInput, 
@@ -9,12 +10,9 @@ const SmartImportCard = ({
   submitStatus, 
   onSubmit 
 }) => {
-  const parsedLinks = useMemo(() => {
-    if (!rawInput) return [];
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const matches = rawInput.match(urlRegex) || [];
-    return [...new Set(matches.map(link => link.replace(/[.,;]$/, "")))];
-  }, [rawInput]);
+  // לינקים + הכותרת שמופיעה לפני כל לינק (אם יש)
+  const parsedItems = useMemo(() => parseJobLinks(rawInput), [rawInput]);
+  const parsedLinks = useMemo(() => parsedItems.map(item => item.url), [parsedItems]);
 
   return (
     <div className="group relative bg-white/70 backdrop-blur-xl rounded-[2.5rem] border border-white shadow-[0_20px_50px_rgba(0,0,0,0.05)] overflow-hidden transition-all hover:shadow-[0_20px_60px_rgba(0,0,0,0.08)]">
@@ -109,13 +107,16 @@ const SmartImportCard = ({
   onClick={() => {
     // 1. קודם כל שומרים את הלינקים שזיהינו במשתנה זמני
     const linksToSend = [...parsedLinks];
+    const titles = Object.fromEntries(
+      parsedItems.filter(item => item.title).map(item => [item.url, item.title])
+    );
     
     // 2. מנקים את הלוח מיד (המשתמש רואה שהכל נעלם)
     setRawInput('');
     setDuplicateJobs([]);
     
     // 3. שולחים את הלינקים ששמרנו לשרת
-    onSubmit(linksToSend);
+    onSubmit(linksToSend, titles);
   }}
   disabled={parsedLinks.length === 0 || submitStatus === 'sending'}
   className={`group relative flex items-center gap-4 py-4 px-12 rounded-2xl font-black transition-all overflow-hidden

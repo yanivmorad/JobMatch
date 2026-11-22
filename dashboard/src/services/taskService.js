@@ -45,9 +45,11 @@ export const taskService = {
     return response.data;
   },
 
-  // הוספת משרות חדשות (URLs)
-  addJobUrls: async (urls) => {
-    const response = await apiClient.post('/jobs/url', { urls });
+  // הוספת משרות חדשות (URLs). titles: מיפוי אופציונלי url -> כותרת שזוהתה בטקסט
+  addJobUrls: async (urls, titles = null) => {
+    const payload = { urls };
+    if (titles && Object.keys(titles).length > 0) payload.titles = titles;
+    const response = await apiClient.post('/jobs/url', payload);
     return response.data;
   },
 

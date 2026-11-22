@@ -46,9 +46,9 @@ export const useJobActions = (onJobAdded) => {
     }
   };
 
-  const handleUrlSubmit = async (parsedLinks, callback) => {
+  const handleUrlSubmit = async (parsedLinks, callback, titles = null) => {
     const result = await handleActionWrapper(async () => {
-      const data = await taskService.addJobUrls(parsedLinks);
+      const data = await taskService.addJobUrls(parsedLinks, titles);
       
       if (data.skipped_urls && data.skipped_urls.length > 0) {
         if (data.added === 0) {

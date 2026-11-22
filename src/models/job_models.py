@@ -1,11 +1,13 @@
 # src/models/job_models.py
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
 
 class JobSubmission(BaseModel):
     urls: List[str]
+    # אופציונלי: url -> כותרת המשרה כפי שזוהתה בטקסט שהודבק (למשל בהודעת וואטסאפ)
+    titles: Optional[Dict[str, str]] = None
 
 
 class TextSubmission(BaseModel):
