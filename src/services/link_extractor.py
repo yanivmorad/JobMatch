@@ -14,7 +14,7 @@
 """
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 # תווים חוקיים ב-URL לפי RFC 3986 (ASCII בלבד)
@@ -63,6 +63,103 @@ _LINKEDIN_JOB_PATH = re.compile(r"/jobs/view/", re.IGNORECASE)
 class ExtractedLinks:
     jobs: List[str] = field(default_factory=list)
     ignored: List[dict] = field(default_factory=list)
+    # url -> כותרת המשרה כפי שכתובה בהודעה (רק כשזוהתה בביטחון סביר)
+    titles: Dict[str, str] = field(default_factory=dict)
+
+
+# --- זיהוי כותרת המשרה מתוך ההודעה ---
+
+# תחילת הודעה בהעתקה מוואטסאפ: "[22.11, 7:43] שם: " או בייצוא אנדרואיד "22/11/2026, 07:43 - שם: "
+_CHAT_PREFIX = re.compile(
+    r"^(?:\[[^\]\n]{1,40}\]\s*|\d{1,2}[./]\d{1,2}[./]\d{2,4},?\s+\d{1,2}:\d{2}(?:\s?[AaPp][Mm])?\s+-\s+)"
+    r"[^:\n]{1,60}:[ \t]?",
+    re.MULTILINE,
+)
+# תוויות שמסמנות במפורש שם משרה ("*שם המשרה:* X")
+_TITLE_LABEL = re.compile(
+    r"^(?:שם\s*ה?משרה|שם\s*ה?תפקיד|תפקיד|משרה|position|job\s*title|role|title)\s*[:\-–]\s*",
+    re.IGNORECASE,
+)
+# תווי כיווניות שוואטסאפ מוסיף סביב שמות ומספרי טלפון
+_BIDI = re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+
+
+def _clean_line(line: str) -> str:
+    line = _BIDI.sub("", line)
+    line = re.sub(r"[*_~`]", "", line)  # הדגשות של וואטסאפ / markdown
+    return line.strip().rstrip("-–—|").strip()
+
+
+def _valid_title(line: str) -> Optional[str]:
+    if not line or line.endswith(":") or _URL_RE.search(line):
+        return None
+    if not 2 <= len(line) <= 120 or not re.search(r"[^\W\d_]", line):
+        return None
+    return line
+
+
+def _title_from(region: str, first_line_wins: bool) -> Optional[str]:
+    """
+    בוחר כותרת מתוך הטקסט שלפני הקישור:
+    1. שורה עם תווית ("שם המשרה: X") - הכי אמינה.
+    2. הודעה עם קישור משרה יחיד - השורה הראשונה של ההודעה (שם המשרה בדרך כלל בראש).
+    3. אחרת - השורה הקרובה ביותר לפני הקישור, בדילוג על תוויות ריקות ("לינק להגשה:").
+    """
+    lines = [_clean_line(l) for l in region.splitlines()]
+    lines = [l for l in lines if l]
+
+    for line in reversed(lines):
+        labeled = _TITLE_LABEL.match(line)
+        if labeled:
+            title = _valid_title(line[labeled.end():].strip())
+            if title:
+                return title
+
+    ordered = lines if first_line_wins else list(reversed(lines))
+    for line in ordered:
+        title = _valid_title(line)
+        if title:
+            return title
+        if first_line_wins:
+            return None  # השורה הראשונה לא נראית ככותרת - לא מנחשים
+    return None
+
+
+def _extract_titles(text: str, matches: List[tuple]) -> Dict[int, str]:
+    """
+    matches: [(start, end, is_job)] לכל קישור בטקסט.
+    מחזיר {אינדקס של קישור משרה: כותרת}.
+    """
+    # גבולות ההודעות (אם זה טקסט מוואטסאפ); אחרת כל הטקסט הוא "הודעה" אחת
+    starts = [m.start() for m in _CHAT_PREFIX.finditer(text)]
+    is_chat = bool(starts)
+    bounds = (starts or [0]) + [len(text)]
+    messages = list(zip(bounds[:-1], bounds[1:]))
+    if starts and starts[0] > 0:
+        messages.insert(0, (0, starts[0]))
+
+    titles = {}
+    for msg_start, msg_end in messages:
+        in_msg = [(i, m) for i, m in enumerate(matches) if msg_start <= m[0] < msg_end]
+        job_links = [(i, m) for i, m in in_msg if m[2]]
+        body_start = msg_start
+        prefix = _CHAT_PREFIX.match(text, msg_start)
+        if prefix:
+            body_start = prefix.end()
+        single = is_chat and len(job_links) == 1
+
+        for i, (start, _end, is_job) in in_msg:
+            if not is_job:
+                continue
+            if single:
+                region_start = body_start
+            else:
+                prev_ends = [m[1] for _, m in in_msg if m[1] <= start]
+                region_start = max([body_start] + prev_ends)
+            title = _title_from(text[region_start:start], first_line_wins=single)
+            if title:
+                titles[i] = title
+    return titles
 
 
 def _host_matches(host: str, domain: str) -> bool:
@@ -127,20 +224,31 @@ def ignore_reason(url: str) -> Optional[str]:
 
 
 def extract_job_links(text: str) -> ExtractedLinks:
-    """כל קישורי המשרות בטקסט, מנורמלים, בלי כפילויות, לפי סדר ההופעה."""
+    """
+    כל קישורי המשרות בטקסט, מנורמלים, בלי כפילויות, לפי סדר ההופעה.
+    בנוסף: titles - הכותרת שכתובה בהודעה לכל קישור משרה (כשאפשר לזהות אותה).
+    """
+    text = text or ""
     result = ExtractedLinks()
-    seen = set()
-    for match in _URL_RE.finditer(text or ""):
+    found = []  # (start, end, url, reason)
+    for match in _URL_RE.finditer(text):
         raw = _trim(match.group(0))
         if not raw:
             continue
         url = normalize_job_url(raw)
+        found.append((match.start(), match.start() + len(raw), url, ignore_reason(url)))
+
+    titles = _extract_titles(text, [(s, e, reason is None) for s, e, _u, reason in found])
+
+    seen = set()
+    for i, (_s, _e, url, reason) in enumerate(found):
         if url in seen:
             continue
         seen.add(url)
-        reason = ignore_reason(url)
         if reason:
             result.ignored.append({"url": url, "reason": reason})
         else:
             result.jobs.append(url)
+            if i in titles:
+                result.titles[url] = titles[i]
     return result

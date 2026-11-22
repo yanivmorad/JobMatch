@@ -84,3 +84,29 @@ async def test_find_existing_job_can_exclude_itself(db):
     await add_new_job("https://jobs.lever.co/acme/2")
     job = await get_job_by_url("https://jobs.lever.co/acme/2")
     assert await find_existing_job("https://jobs.lever.co/acme/2", exclude_id=job["id"]) is None
+
+
+async def test_extract_links_preview_includes_titles():
+    async with _client() as client:
+        r = await client.post("/api/jobs/extract-links", json={"text": SAMPLE})
+    assert r.json()["titles"]["https://rapaport.bamboohr.com/careers/307"] == (
+        "Customer Success Operations Specialist - Student"
+    )
+
+
+@pytest.mark.db
+async def test_title_from_the_message_is_saved_with_the_job(db):
+    async with _client() as client:
+        await client.post("/api/jobs/raw", json={"text": SAMPLE})
+    job = await get_job_by_url("https://hiremetech.com/job/147318715")
+    assert job["job_title"] == "C# Software Developer"
+    # החברה לא כתובה בהודעה - נשארת placeholder עד שה-AI / הסורק ימצאו אותה
+    assert job["company"] == "https://hiremetech.com/job/147318715"
+
+
+@pytest.mark.db
+async def test_link_without_a_title_keeps_the_placeholder(db):
+    async with _client() as client:
+        await client.post("/api/jobs/raw", json={"text": "https://a.com/jobs/1"})
+    job = await get_job_by_url("https://a.com/jobs/1")
+    assert job["job_title"] == "https://a.com/jobs/1"

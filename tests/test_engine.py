@@ -297,3 +297,17 @@ def test_prompt_lets_the_ai_take_the_company_from_an_application_email():
     prompt = build_prompt("cv", "ctx", {"full_description": "d"})
     assert "jobs@acme-tech.com -> Acme Tech" in prompt
     assert "אל תמציא" in prompt
+
+
+def test_known_title_asks_to_focus_on_that_job_in_a_multi_job_page():
+    prompt = build_prompt(
+        "cv", "ctx", {"full_description": "Open positions: QA, DevOps", "job_title": "JUNIOR QA ENGINEER"}
+    )
+    assert "תפקיד: JUNIOR QA ENGINEER" in prompt
+    assert "נתח רק את המשרה שתואמת" in prompt
+
+
+def test_no_focus_instruction_without_a_known_title():
+    prompt = build_prompt("cv", "ctx", {"full_description": "d", "company": "Acme", "job_title": "https://x.com/j"})
+    assert "חברה: Acme" in prompt
+    assert "נתח רק את המשרה שתואמת" not in prompt
