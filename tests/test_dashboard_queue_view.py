@@ -111,14 +111,18 @@ def test_polling_is_not_gated_on_already_loaded_processing_jobs():
 
 
 def test_overview_monitor_shows_the_whole_run():
-    src = _read("components/OverviewTab.jsx")
+    # אחרי העיצוב מחדש: הניטור החי נמצא במסך הקליטה (IntakeScreen), והסקירה וסרגל הצד מסכמים את כל הריצה
+    src = _read("components/screens/IntakeScreen.jsx")
     assert ".slice(0, 4)" not in src  # קודם: רק 4 משרות בעיבוד
-    assert re.search(r"<ActiveQueueList[^>]*activeQueue=\{runJobs\}", src, re.DOTALL)
+    assert re.search(r"runList\.map\(\(job\)\s*=>\s*<RunRow", src)  # כל קישור בריצה מקבל שורה
+    assert "runSummary(runJobs)" in src
+    overview = _read("components/screens/OverviewScreen.jsx")
+    assert "runSummary(runJobs)" in overview and ".slice(0, 4)" not in overview
     dashboard = _read("components/JobDashboard.jsx")
     assert "currentRun(" in dashboard and "runJobs={runJobs}" in dashboard
 
 
 def test_queue_item_uses_the_shared_display_name():
-    src = _read("components/ActiveQueueList.jsx")
+    src = _read("components/run/RunRow.jsx")
     assert "jobDisplayName(job)" in src
     assert 'job.company !== "Unknown"' not in src  # הלוגיקה הישנה שהציגה את ה-URL הזמני
