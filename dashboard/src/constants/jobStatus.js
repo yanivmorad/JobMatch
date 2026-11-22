@@ -46,3 +46,33 @@ export const isFailed = (status) => FAILED_STATUSES.includes(status);
 // משרות שמוצגות בלשונית ההזנה: בעיבוד או נכשלו
 export const isInPipeline = (status) => isProcessing(status) || isFailed(status);
 export const needsManualContent = (status) => NEEDS_MANUAL_CONTENT_STATUSES.includes(status);
+
+// סטטוסים שבהם worker עובד על המשרה ממש עכשיו (לעומת ממתינה בתור) - לחיווי "עובד" מול "ממתין"
+export const WORKING_STATUSES = ['RESOLVING', 'SCRAPING', 'ANALYZING'];
+export const isWorking = (status) => WORKING_STATUSES.includes(status);
+
+// באיזה שלב בצינור משרה נכשלה - כדי לסמן את הצעד הנכון ב-ProcessingTrack
+export const FAILED_AT_STAGE = {
+  FAILED_RESOLVE: 'resolve',
+  DUPLICATE: 'resolve',
+  FAILED_SCRAPE: 'scrape',
+  NO_DATA: 'scrape',
+  FAILED_ANALYSIS: 'ai',
+};
+
+// תוויות קצרות לכל סטטוס בצינור (שורת הניטור)
+export const PIPELINE_STATUS_LABELS = {
+  NEW: 'בתור',
+  PENDING_RESOLVE: 'ממתין לפענוח',
+  RESOLVING: 'מפענח קישור',
+  WAITING_FOR_SCRAPE: 'ממתין לסריקה',
+  SCRAPING: 'סורק',
+  WAITING_FOR_AI: 'ממתין לניתוח',
+  ANALYZING: 'מנתח',
+  COMPLETED: 'הושלם',
+  FAILED_RESOLVE: 'הפענוח נכשל',
+  FAILED_SCRAPE: 'הסריקה נכשלה',
+  FAILED_ANALYSIS: 'הניתוח נכשל',
+  NO_DATA: 'אין מידע',
+  DUPLICATE: 'כבר קיימת',
+};

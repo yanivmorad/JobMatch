@@ -1,22 +1,21 @@
-import { 
-  Clock, 
-  Send, 
-  Phone, 
-  Users, 
-  XCircle, 
-  AlertCircle, 
-  Ghost
-} from 'lucide-react';
-
+// סטטוס ההגשה (application_status). הערכים זהים ל-ApplicationStatus בשרת.
+// tone הוא תפקיד צבע מהטוקנים (לא hex), stage הוא המיקום ב-pipeline של ההגשות.
 export const STATUS_CONFIG = {
-  pending: { label: "ממתין לבדיקה", color: "#6c757d", bg: "#f8f9fa", border: "#dee2e6", description: "חדש", icon: Clock },
-  applied: { label: "הוגשה מועמדות", color: "#007bff", bg: "#e7f1ff", border: "#b6d4fe", description: "שלחתי קורות חיים", icon: Send },
-  phone_screen: { label: "ראיון טלפוני", color: "#6f42c1", bg: "#f3eafa", border: "#d9bbef", description: "שיחה ראשונית", icon: Phone },
-  interview: { label: "ראיון", color: "#fd7e14", bg: "#fff5eb", border: "#fed7b1", description: "בתהליך ראיונות", icon: Users },
-  not_relevant: { label: "לא רלוונטי", color: "#495057", bg: "#e9ecef", border: "#ced4da", description: "לא מתאים לי", icon: XCircle },
-  rejected: { label: "דחייה", color: "#dc3545", bg: "#f8d7da", border: "#f5c2c7", description: "קיבלתי לא", icon: AlertCircle },
-  ghosted: { label: "ללא מענה", color: "#856404", bg: "#fff3cd", border: "#ffeeba", description: "לא חזרו אלי מעל חודש", icon: Ghost }
+  pending: { label: 'ממתין לבדיקה', description: 'עוד לא החלטת', tone: 'neutral' },
+  applied: { label: 'הוגש', description: 'שלחתי קורות חיים', tone: 'accent', stage: 0 },
+  phone_screen: { label: 'שיחה טלפונית', description: 'שיחה ראשונית', tone: 'accent', stage: 1 },
+  interview: { label: 'ראיון', description: 'בתהליך ראיונות', tone: 'accent', stage: 2 },
+  rejected: { label: 'דחייה', description: 'קיבלתי תשובה שלילית', tone: 'danger', closed: true },
+  ghosted: { label: 'ללא מענה', description: 'לא חזרו אליי', tone: 'muted', closed: true },
+  not_relevant: { label: 'לא רלוונטי', description: 'לא מתאים לי', tone: 'muted', closed: true },
 };
 
+// שלבי ה-pipeline לפי הסדר
+export const PIPELINE_STAGES = Object.keys(STATUS_CONFIG)
+  .filter((k) => STATUS_CONFIG[k].stage !== undefined)
+  .sort((a, b) => STATUS_CONFIG[a].stage - STATUS_CONFIG[b].stage);
+
+// סטטוסים שהשרת מעביר בגללם לארכיון אוטומטית (update_application_status)
+export const AUTO_ARCHIVE_STATUSES = Object.keys(STATUS_CONFIG).filter((k) => STATUS_CONFIG[k].closed);
+
 export const getStatusLabel = (status) => STATUS_CONFIG[status]?.label || status;
-export const getStatusColor = (status) => STATUS_CONFIG[status]?.color || "#6c757d";
