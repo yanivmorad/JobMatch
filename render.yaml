@@ -8,6 +8,9 @@ services:
   - type: web
     name: jobmatch
     runtime: docker
+    # Same region as the Neon project (AWS Europe Central 1, Frankfurt): every query crosses
+    # this link, and Render's default region is Oregon
+    region: frankfurt
     dockerfilePath: ./Dockerfile
     # free = 0.1 CPU / 512 MB, spins down after 15 min without inbound traffic (see README
     # "Keeping it awake"). starter = 0.5 CPU / 512 MB, no spin-down (paid).
