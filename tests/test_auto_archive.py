@@ -173,7 +173,15 @@ async def test_maintenance_worker_runs_at_startup_and_survives_errors(monkeypatc
             raise asyncio.CancelledError
         await real_sleep(0)
 
+    pruned = []
+
+    async def fake_prune():
+        pruned.append(1)
+        return 0
+
     monkeypatch.setattr(worker_manager, "auto_archive_old_applications", fake_archive)
+    # כל קריאה ל-DB בלולאה חייבת להיות מוחלפת: בלי fixture של DB, get_pool מתחבר לפי .env
+    monkeypatch.setattr(worker_manager, "prune_inbound_messages", fake_prune)
     monkeypatch.setattr(worker_manager.asyncio, "sleep", fake_sleep)
 
     with pytest.raises(asyncio.CancelledError):
@@ -181,6 +189,7 @@ async def test_maintenance_worker_runs_at_startup_and_survives_errors(monkeypatc
 
     assert len(calls) == 3  # מיד בהפעלה, ואז אחרי כל המתנה
     assert sleeps == [123, 123, 123]
+    assert len(pruned) == 2  # בסבב הראשון ה-archive נכשל, והסבב נקטע לפני הניקוי
 
 
 async def test_start_background_workers_schedules_maintenance(monkeypatch):
@@ -209,4 +218,31 @@ async def test_start_background_workers_schedules_maintenance(monkeypatch):
     await asyncio.gather(*list(worker_manager._background_tasks))
 
     assert started[0] == "reset"
+    # בלי משתני WHATSAPP_* אין בוט, ולכן גם אין notifier_worker
     assert set(started[1:]) == {"resolver_worker", "scrape_worker", "ai_worker", "maintenance_worker"}
+
+
+async def test_notifier_worker_starts_only_when_a_bot_is_configured(monkeypatch):
+    started = []
+
+    async def noop(*_args):
+        return {}
+
+    def fake_worker(name):
+        async def run():
+            started.append(name)
+        run.__name__ = name
+        return run
+
+    monkeypatch.setattr(worker_manager, "reset_stuck_jobs", noop)
+    monkeypatch.setattr(worker_manager, "pending_retry_times", noop)
+    for name in ("resolver_worker", "scrape_worker", "ai_worker", "maintenance_worker", "notifier_worker"):
+        monkeypatch.setattr(worker_manager, name, fake_worker(name))
+    monkeypatch.setattr(worker_manager, "enabled_channels", lambda: ["whatsapp"])
+    monkeypatch.setattr(worker_manager, "_tasks", {})  # שלא יישאר notifier_worker לבדיקות הבאות
+
+    await worker_manager.start_background_workers()
+    await asyncio.gather(*list(worker_manager._background_tasks))
+
+    assert "notifier_worker" in started
+    assert "notifier_worker" in worker_manager.workers_status()

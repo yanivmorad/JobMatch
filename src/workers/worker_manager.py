@@ -12,6 +12,9 @@
 ניסיונות חוזרים: תקלה זמנית (timeout / 5xx / רשת) -> fail_or_retry: חוזרת לתור עם backoff
 עד MAX_JOB_ATTEMPTS (ברירת מחדל 3), ואז FAILED_*. 429 של Gemini -> המשרה חוזרת לתור בלי
 להיספר כניסיון, וה-AI worker ממתין (rate_limiter).
+
+בוטים: notifier_worker רץ רק כשבוט מוגדר (services/notifier.py). כל צעד שעבד בצינור מעיר
+אותו (NOTIFY_SIGNAL), והוא שולח ציון למי ששלח את המשרה מהבוט כשהמשרה מגיעה למצב סופי.
 """
 import asyncio
 import logging
@@ -29,7 +32,9 @@ from db.jobs_repository import (
     get_api_usage,
     increment_api_usage,
     mark_failed,
+    move_job_notifications,
     pending_retry_times,
+    prune_inbound_messages,
     requeue_in_progress,
     requeue_job,
     reset_stuck_jobs,
@@ -44,6 +49,7 @@ from scraper_service.resolvers import (
 from scraper_service.utils import failure_message, is_transient_failure
 from services.profile_service import get_profile
 from services.link_extractor import normalize_job_url
+from services.notifier import NOTIFY_SIGNAL, enabled_channels, send_pending_notifications
 from workers.queue_signal import IdleWaiter, notify, notify_at
 from workers.rate_limiter import AIRateLimiter, ModelPool
 
@@ -117,7 +123,10 @@ def ai_availability() -> dict:
 def workers_status() -> dict:
     """לכל worker: האם המשימה חיה, כמה משרות טופלו, מתי לאחרונה, שגיאה אחרונה."""
     out = {}
-    for name in ("resolver_worker", "scrape_worker", "ai_worker", "maintenance_worker"):
+    names = ["resolver_worker", "scrape_worker", "ai_worker", "maintenance_worker"]
+    if "notifier_worker" in _tasks:  # רק כשבוט מוגדר
+        names.append("notifier_worker")
+    for name in names:
         task = _tasks.get(name)
         out[name] = {
             "running": bool(task and not task.done()),
@@ -158,6 +167,8 @@ async def resolve_next(resolver: URLResolver) -> bool:
             if existing:
                 logger.warning(f"🚫 [ID {job_id}] Resolver: duplicate of ID {existing['id']}")
                 await mark_failed(job_id, "DUPLICATE", f"Exists as ID: {existing['id']}")
+                # מי שחיכה לציון מבוט יקבל את הציון של המשרה המקורית, לא "נכשל"
+                await move_job_notifications(job_id, existing["id"])
                 return True
         await update_job_after_resolution(job_id, resolved_url, "WAITING_FOR_SCRAPE")
         notify("WAITING_FOR_SCRAPE")
@@ -313,6 +324,7 @@ async def _run_loop(name: str, status: str, step: Callable) -> None:
         if worked:
             _touch(name, jobs=_state.get(name, {}).get("jobs", 0) + 1, last_job_at=time.time())
             idle.reset()
+            notify(NOTIFY_SIGNAL)  # אולי משרה של בוט הגיעה למצב סופי (בלי בוט: אף אחד לא מחכה)
         else:
             await idle.wait()
 
@@ -355,6 +367,11 @@ async def ai_worker():
     await _run_loop("ai_worker", "WAITING_FOR_AI", lambda: analyze_next(ai_pool))
 
 
+async def notifier_worker():
+    logger.info(f"📨 Notifier Worker started (channels: {', '.join(enabled_channels())})")
+    await _run_loop("notifier_worker", NOTIFY_SIGNAL, send_pending_notifications)
+
+
 MAINTENANCE_INTERVAL_SECONDS = 24 * 60 * 60
 
 
@@ -370,6 +387,7 @@ async def maintenance_worker(interval_seconds: float = MAINTENANCE_INTERVAL_SECO
             count = await auto_archive_old_applications()
             if count:
                 logger.info(f"👻 Maintenance: {count} applications marked as ghosted")
+            await prune_inbound_messages()
             _touch("maintenance_worker", last_job_at=time.time())
         except Exception as e:
             # שגיאה (למשל DB לא זמין רגעית) לא עוצרת את הלולאה - ננסה שוב בסבב הבא
@@ -392,7 +410,10 @@ async def start_background_workers():
     if stuck:
         logger.warning(f"🧹 Jobs left in progress by the previous run: {stuck}")
 
-    for worker in (resolver_worker, scrape_worker, ai_worker, maintenance_worker):
+    workers = [resolver_worker, scrape_worker, ai_worker, maintenance_worker]
+    if enabled_channels():
+        workers.append(notifier_worker)
+    for worker in workers:
         task = asyncio.create_task(worker(), name=worker.__name__)
         _tasks[worker.__name__] = task
         _background_tasks.add(task)
