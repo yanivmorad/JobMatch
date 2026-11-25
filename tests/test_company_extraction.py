@@ -7,6 +7,7 @@ from db.jobs_repository import (
     finish_scrape,
     get_all_jobs,
     get_job_by_url,
+    update_manual_job,
 )
 
 pytestmark = pytest.mark.db
@@ -43,6 +44,49 @@ async def test_analysis_fills_company_and_title(db):
     assert row["company"] == "Wix"
     assert row["job_title"] == "Backend Developer"
     assert row["status"] == "COMPLETED"
+
+
+async def test_analysis_title_replaces_the_title_guessed_from_the_message(db):
+    """
+    באג (בדיקת קצה לקצה בענן, 26.11): הכותרת שנוחשה מההודעה ("GitLab - remote", "להיום")
+    הוצגה בדשבורד במקום שם המשרה שה-AI קרא בדף ("Customer Success Engineer, EMEA").
+    הכותרת מההודעה היא רמז ל-AI, לא ערך שהמשתמש הקליד.
+    """
+    url = "https://jobs.example.com/msg"
+    await add_new_job(url, source="web", manual_meta={"title": "GitLab - remote"})
+    job = await fetch_next_job("PENDING_RESOLVE", "RESOLVING")
+    await finish_scrape(job["id"], "תיאור")
+
+    await finish_analysis(
+        job["id"], {"company": "GitLab", "job_title": "Customer Success Engineer, EMEA"}
+    )
+
+    row = await get_job_by_url(url)
+    assert row["job_title"] == "Customer Success Engineer, EMEA"
+
+
+async def test_analysis_keeps_the_message_title_when_the_ai_finds_none(db):
+    url = "https://jobs.example.com/msg2"
+    await add_new_job(url, source="web", manual_meta={"title": "QA Engineer"})
+    job = await get_job_by_url(url)
+
+    await finish_analysis(job["id"], {"company": "Acme", "job_title": "לא צוין"})
+
+    assert (await get_job_by_url(url))["job_title"] == "QA Engineer"
+
+
+async def test_analysis_does_not_override_a_title_the_user_edited(db):
+    """עריכה במסך המשרה (update_manual_job) היא ערך של המשתמש, גם למשרה שנכנסה מקישור."""
+    url = "https://jobs.example.com/edited"
+    await add_new_job(url, source="web", manual_meta={"title": "מההודעה"})
+    await update_manual_job(url, "Monday", "QA Lead", "תיאור שהמשתמש הדביק")
+    job = await get_job_by_url(url)
+
+    await finish_analysis(job["id"], {"company": "Other Co", "job_title": "Other"})
+
+    row = await get_job_by_url(url)
+    assert row["company"] == "Monday"
+    assert row["job_title"] == "QA Lead"
 
 
 async def test_analysis_does_not_override_manual_values(db):

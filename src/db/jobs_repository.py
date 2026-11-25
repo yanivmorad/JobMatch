@@ -163,8 +163,10 @@ async def finish_scrape(
 async def finish_analysis(job_id: int, result: dict):
     """
     שומר את תוצאות הניתוח הסופיות של ה-LLM ומסמן את התהליך כהושלם (COMPLETED).
-    company / job_title שה-AI חילץ נכתבים לעמודות רק אם הערך הקיים הוא placeholder,
-    כך שערך שהמשתמש הזין ידנית לא נדרס.
+    company שה-AI חילץ נכתב רק במקום placeholder.
+    job_title שה-AI חילץ נכתב במקום placeholder, וגם במקום כותרת שנוחשה מההודעה או מהסורק
+    (source שאינו 'manual'): היא רק רמז, וה-AI קרא את שם המשרה מהדף עצמו.
+    ערכים שהמשתמש הקליד (משרה ידנית, או עריכה ב-update_manual_job) לא נדרסים.
     """
     pool = await get_pool()
     if isinstance(result, dict):
@@ -184,7 +186,7 @@ async def finish_analysis(job_id: int, result: dict):
             error_log = {_CLEAR_RETRY_NOTE_SQL},
             company = CASE WHEN $3::text IS NOT NULL AND {company_cond} THEN $3
                            WHEN {company_cond} THEN 'לא צוין' ELSE company END,
-            job_title = CASE WHEN $4::text IS NOT NULL AND {title_cond} THEN $4
+            job_title = CASE WHEN $4::text IS NOT NULL AND ({title_cond} OR source IS DISTINCT FROM 'manual') THEN $4
                              WHEN {title_cond} THEN 'לא צוין' ELSE job_title END
         WHERE id = $1
         """,
@@ -464,12 +466,16 @@ async def update_application_status(
 
 
 async def update_manual_job(url: str, company: str, title: str, description: str):
-    """מאפשר למשתמש לערוך פרטי משרה ב-UI ולשלוח אותה לניתוח AI מחדש."""
+    """
+    מאפשר למשתמש לערוך פרטי משרה ב-UI ולשלוח אותה לניתוח AI מחדש.
+    source = 'manual': מעכשיו החברה, הכותרת והתיאור הם של המשתמש. finish_analysis לא דורס אותם,
+    ו-retry_job מחזיר אותה ל-AI ולא לסריקה (שהייתה דורסת את התיאור שהודבק).
+    """
     pool = await get_pool()
     await pool.execute(
         """
-        UPDATE jobs SET 
-            status = 'WAITING_FOR_AI', company = $2, job_title = $3, 
+        UPDATE jobs SET
+            status = 'WAITING_FOR_AI', source = 'manual', company = $2, job_title = $3,
             full_description = $4, scraped_at = NOW(), is_archived = FALSE, error_log = NULL
         WHERE url = $1
         """,
