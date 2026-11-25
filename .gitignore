@@ -16,6 +16,9 @@ server.log
 data/
 *.log
 
+# Claude Code: worktrees של סשנים מקבילים
+.claude/worktrees/
+
 # IDE
 .vscode/
 .idea/
