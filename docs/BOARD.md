@@ -36,7 +36,7 @@
 | T6 | P1 | CI | S-Infra | פתוח | T0 | |
 | T15 | P2 | Python 3.12 ב-venv | S-Infra | פתוח | T0 | |
 | T7 | P1 | התאמת תיעוד | S-Infra | פתוח | T2, T4, T5 | |
-| T8 | P0 | פריסה Render + Neon | S0 | עלה 2026-11-25: `https://jobmatch-oqbq.onrender.com` (Free, Docker, Frankfurt). `/ping`, `/health` (DB 8ms, 4 workers), הדשבורד ו-401 בלי טוקן נבדקו | T3 | `main` (`a9ae914`) |
+| T8 | P0 | פריסה Render + Neon | S0 | עלה 2026-11-25: שירות `jobmatch` ב-Render (Free, Docker, Frankfurt; הכתובת בעמוד השירות, לא בריפו הציבורי). `/ping`, `/health` (DB 8ms, 4 workers), הדשבורד ו-401 בלי טוקן נבדקו | T3 | `main` (`a9ae914`) |
 | T18 | P0 | בדיקת קצה לקצה: הודעת וואטסאפ אמיתית ← ציון בדשבורד. מקומית לפני הפריסה, ושוב על הענן | S0 | הושלם 2026-11-26 על הענן (בלי סיבוב מקומי): 4 משרות (HireMeTech עם טוקן, Comeet, Lever, Greenhouse) ← ציון תוך ~2 דקות, 2 קישורים שאינם משרות סוננו, 5 קריאות Gemini. 2 באגים בכותרת תוקנו (`a9b0a45`, `a8b7da1`) | T8 | `main` |
 | T16 | P1 | בוט וואטסאפ (WhatsApp Cloud API): webhook, חתימה, רשימת מספרים מורשים, כפילויות, ציון חוזר לשולח | S0 | ב-PR: הקוד והבדיקות מוכנים, כבוי עד שמגדירים את Meta (`docs/whatsapp-setup.md`). טלגרם: אותו `notifier`, ערוץ נוסף | T8, T18 | `feat/whatsapp-bot` |
 
@@ -74,7 +74,7 @@
 ## חסמים ושאלות פתוחות
 - T8: Neon נוצר 2026-11-25: פרויקט `jobmatch` (`curly-thunder-42165976`), branch `production`, Frankfurt, Free.
   Render: ל-GitHub App של Render נוספה גישה ל-`JobMatch` (ול-`myWhatsAppBot` בלבד). Blueprint `jobmatch`,
-  שירות `srv-dc3knr49v7es73cen8hg`. Docker רץ ב-Free. `HIRE_ME_TECH_TOKEN`, `RESUME_TEXT` ו-`PERSONAL_CONTEXT_TEXT`
+  Docker רץ ב-Free. `HIRE_ME_TECH_TOKEN`, `RESUME_TEXT` ו-`PERSONAL_CONTEXT_TEXT`
   לא הוגדרו: הפרופיל נכנס דרך מסך הפרופיל. `API_TOKEN` נחשף בצילום מסך בשיחה: להחליף (לא אומת שהוחלף).
   `render.yaml`: נוסף `region: frankfurt`, ליד Neon (ברירת המחדל הייתה Oregon).
   ה-workspace ב-Render מכיל גם את `home-visit-*` ואת RidePals: 750 השעות החינמיות משותפות להם.
