@@ -592,3 +592,121 @@ async def delete_job_by_id(job_id: int):
     """מחיקת משרה לפי מזהה פנימי (ID)."""
     pool = await get_pool()
     await pool.execute("DELETE FROM jobs WHERE id = $1", job_id)
+
+# --- בוטים: הודעות נכנסות והתראות על ציון ---
+
+# משרה במצב סופי: אין עוד שלב בצינור שיעבוד עליה מעצמו (FAILED_* נקבע רק אחרי כל הניסיונות)
+NOTIFY_FINAL_STATUSES = (
+    "COMPLETED", "FAILED_RESOLVE", "FAILED_SCRAPE", "FAILED_ANALYSIS", "NO_DATA", "DUPLICATE",
+)
+
+
+async def claim_inbound_message(channel: str, message_id: str) -> bool:
+    """True בפעם הראשונה שההודעה מגיעה, False אם כבר טופלה (webhook שנשלח שוב)."""
+    pool = await get_pool()
+    inserted = await pool.fetchval(
+        """
+        INSERT INTO inbound_messages (channel, message_id) VALUES ($1, $2)
+        ON CONFLICT DO NOTHING RETURNING 1
+        """,
+        channel,
+        message_id,
+    )
+    return inserted is not None
+
+
+async def prune_inbound_messages(days: int = 8) -> int:
+    """Meta שולחת שוב עד 7 ימים; מעבר לזה אין צורך לזכור את ה-id."""
+    pool = await get_pool()
+    result = await pool.execute(
+        "DELETE FROM inbound_messages WHERE received_at < NOW() - make_interval(days => $1)", days
+    )
+    return int(result.split()[-1])
+
+
+# חלון השירות של וואטסאפ: הודעה חופשית מותרת רק עד 24 שעות מההודעה של המשתמש. מחוץ לו
+# השליחה תיכשל בכל מקרה, ולכן התראה ישנה יותר לא נשלחת (ולא מנוסה שוב בכל צעד של הצינור).
+NOTIFY_WINDOW_HOURS = 24
+
+
+async def add_job_notification(job_id: int, channel: str, recipient: str) -> None:
+    """
+    קישור שנשלח שוב (גם אחרי שכבר קיבל ציון) מקבל את התוצאה שוב: השורה מתאפסת ונספרת
+    מעכשיו (חלון 24 השעות נפתח מחדש עם ההודעה החדשה).
+    """
+    pool = await get_pool()
+    await pool.execute(
+        """
+        INSERT INTO job_notifications (job_id, channel, recipient) VALUES ($1, $2, $3)
+        ON CONFLICT (job_id, channel, recipient)
+        DO UPDATE SET notified_at = NULL, created_at = NOW()
+        """,
+        job_id,
+        channel,
+        recipient,
+    )
+
+
+async def move_job_notifications(from_job_id: int, to_job_id: int) -> None:
+    """
+    משרה שהתבררה ככפולה (DUPLICATE אחרי פענוח): מי שחיכה לה יקבל את הציון של המשרה המקורית.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                INSERT INTO job_notifications (job_id, channel, recipient, created_at)
+                SELECT $2, channel, recipient, created_at FROM job_notifications
+                WHERE job_id = $1 AND notified_at IS NULL
+                ON CONFLICT (job_id, channel, recipient)
+                DO UPDATE SET notified_at = NULL, created_at = EXCLUDED.created_at
+                """,
+                from_job_id,
+                to_job_id,
+            )
+            await conn.execute("DELETE FROM job_notifications WHERE job_id = $1", from_job_id)
+
+
+async def pending_job_notifications(channels: List[str]) -> List[dict]:
+    """התראות שעוד לא נשלחו, על משרות שהגיעו למצב סופי, בתוך חלון 24 השעות."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT n.job_id, n.channel, n.recipient, j.status::text AS status, j.company, j.job_title,
+               j.source_url, j.url, j.error_log, j.analysis_result
+        FROM job_notifications n JOIN jobs j ON j.id = n.job_id
+        WHERE n.notified_at IS NULL AND n.channel = ANY($1::text[])
+          AND j.status::text = ANY($2::text[])
+          AND n.created_at > NOW() - make_interval(hours => $3)
+        ORDER BY n.created_at
+        """,
+        list(channels),
+        list(NOTIFY_FINAL_STATUSES),
+        NOTIFY_WINDOW_HOURS,
+    )
+    jobs = []
+    for row in rows:
+        job = dict(row)
+        analysis = job.pop("analysis_result")
+        if isinstance(analysis, str):
+            try:
+                analysis = json.loads(analysis)
+            except ValueError:
+                analysis = None
+        job["analysis"] = analysis if isinstance(analysis, dict) else {}
+        jobs.append(job)
+    return jobs
+
+
+async def mark_job_notified(job_id: int, channel: str, recipient: str) -> None:
+    pool = await get_pool()
+    await pool.execute(
+        """
+        UPDATE job_notifications SET notified_at = NOW()
+        WHERE job_id = $1 AND channel = $2 AND recipient = $3
+        """,
+        job_id,
+        channel,
+        recipient,
+    )

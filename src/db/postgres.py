@@ -238,6 +238,32 @@ async def init_db(conn):
         """
     )
 
+    # בוטים (וואטסאפ, ובהמשך טלגרם): הודעה נכנסת נרשמת לפי ה-id שלה, כי Meta שולחת
+    # webhook שוב (עד 7 ימים) כשהשרת לא ענה בזמן, למשל כשהוא ישן ב-Render החינמי.
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inbound_messages (
+            channel TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            received_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            PRIMARY KEY (channel, message_id)
+        )
+        """
+    )
+    # למי לשלוח את הציון כשהמשרה מסתיימת. נמחק יחד עם המשרה.
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_notifications (
+            job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+            channel TEXT NOT NULL,
+            recipient TEXT NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            notified_at TIMESTAMP WITH TIME ZONE,
+            PRIMARY KEY (job_id, channel, recipient)
+        )
+        """
+    )
+
     # 4. טריגר updated_at
     await conn.execute(
         """
