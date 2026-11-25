@@ -146,6 +146,18 @@ _RECRUIT_PREFIX = re.compile(
 _RECRUIT_INFIX = re.compile(r"\sדרוש(?:ים|ות|ה)?(?:\s*/\s*(?:ות|ה))?\s*:?\s+(?=\S)")
 
 
+# מה שנשאר אחרי פתיח כמו "משרות חמות להיום" / "משרות חדשות השבוע!": זו כותרת של הודעה, לא שם משרה
+_TIME_WORDS = re.compile(
+    r"^(?:ל?היום|ל?השבוע|ל?שבוע\s+הזה|ל?סופ\"?ש|today|this\s+week)[\s!.:\-–—]*$", re.IGNORECASE
+)
+# תווית שמובילה לקישור ("לפרטים והגשה:", "לינק להגשה:", "Apply here:") - לא שם משרה
+_APPLY_LABEL = re.compile(
+    r"^(?:ל?פרטים|ל?הגשה|ל?הגשת|לינק|קישור|לקישור|apply|link|details|more\s+info)\b"
+    r"|(?:הגשה|להגשה|apply|link)\s*(?:here|כאן)?\s*$",
+    re.IGNORECASE,
+)
+
+
 def _strip_recruit_prefix(line: str) -> Tuple[str, bool]:
     """
     מוריד אימוג'י ופתיחים ("🔥 דרוש/ה", "משרה חדשה!", "We're hiring:") מתחילת השורה.
@@ -159,6 +171,8 @@ def _strip_recruit_prefix(line: str) -> Tuple[str, bool]:
             break
         line = _strip_decor(re.sub(rf"^{_SEP}+", "", line[m.end():]))
         removed = True
+    if removed and _TIME_WORDS.match(line):
+        return "", True
     if not removed:
         infix = _RECRUIT_INFIX.search(line)
         if infix:
@@ -197,9 +211,15 @@ def _title_from(region: str, first_line_wins: bool) -> Optional[str]:
                 return title
 
     ordered = lines if first_line_wins else list(reversed(lines))
-    for line in ordered:
+    for n, line in enumerate(ordered):
         cleaned, had_prefix = _strip_recruit_prefix(line)
         title = _valid_title(cleaned)
+        if not title and not first_line_wins and n == 0 and cleaned.endswith(":"):
+            # השורה הצמודה לקישור: "אנליסט/ית לצוות חדש, היברידי:" - שם המשרה עם נקודתיים.
+            # תווית הגשה ("לפרטים והגשה:") ממשיכה להיפסל, והחיפוש עולה לשורה שמעליה.
+            stem = cleaned.rstrip(":").strip()
+            if not _APPLY_LABEL.search(stem):
+                title = _valid_title(stem)
         if title:
             return title
         if first_line_wins:

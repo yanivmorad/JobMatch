@@ -253,6 +253,35 @@ def test_first_line_that_is_not_a_title_still_gives_no_guess():
     assert _title_of("לפרטים והגשה:\nQA Engineer") is None
 
 
+# באג (בדיקת קצה לקצה בענן, 26.11): בהודעה עם כמה משרות, השורה שמעל הקישור הסתיימה בנקודתיים
+# ("דרוש/ה אנליסט/ית לצוות חדש, היברידי:") ונפסלה, והחיפוש עלה לכותרת ההודעה
+# ("🔥 משרות חמות להיום 🔥"). אחרי הורדת הפתיח נשאר "להיום", והוא נשמר כשם המשרה.
+_HOT_JOBS = (
+    "🔥 משרות חמות להיום 🔥\n\n"
+    "דרוש/ה אנליסט/ית לצוות חדש, היברידי:\nhttps://a.com/jobs/1\n\n"
+    "GitLab - remote\nhttps://b.com/jobs/2\n"
+)
+
+
+def test_line_before_the_link_ending_with_a_colon_is_the_title():
+    assert extract_job_links(_HOT_JOBS).titles == {
+        "https://a.com/jobs/1": "אנליסט/ית לצוות חדש, היברידי",
+        "https://b.com/jobs/2": "GitLab - remote",
+    }
+
+
+@pytest.mark.parametrize("header", ["🔥 משרות חמות להיום 🔥", "משרות חדשות השבוע!", "משרה חמה להיום"])
+def test_opener_with_only_a_time_word_left_gives_no_title(header):
+    text = f"{header}\nhttps://a.com/jobs/1\nhttps://b.com/jobs/2"
+    assert extract_job_links(text).titles == {}
+
+
+@pytest.mark.parametrize("label", ["לפרטים והגשה:", "לינק להגשה:", "להגשה:", "Apply here:", "קישור:"])
+def test_apply_label_before_the_link_is_still_not_a_title(label):
+    text = f"QA Engineer\n{label}\nhttps://a.com/jobs/1\nhttps://b.com/jobs/2"
+    assert extract_job_links(text).titles.get("https://a.com/jobs/1") == "QA Engineer"
+
+
 def test_plain_list_titles_are_cleaned():
     text = "🔥 דרוש/ה Backend Dev - https://a.com/jobs/1\n• QA Engineer\nhttps://b.com/jobs/2"
     assert extract_job_links(text).titles == {
