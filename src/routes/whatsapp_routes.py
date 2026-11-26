@@ -5,6 +5,7 @@ GET  /webhooks/whatsapp  אימות חד-פעמי כשמגדירים את ה-web
 POST /webhooks/whatsapp  הודעות נכנסות. עונים 200 מיד, והעבודה רצה ברקע: Meta שולחת שוב
                          כשלא מקבלת 200, וכפילויות מסוננות לפי id ההודעה (inbound_messages).
 כשההגדרות חסרות (services/whatsapp.py) שני הנתיבים מחזירים 404: הבוט כבוי.
+הלוגיקה המשותפת לכל הבוטים: services/bot_intake.py.
 """
 import asyncio
 import json
@@ -14,17 +15,23 @@ import secrets
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
-from db.jobs_repository import add_job_notification, claim_inbound_message
+from db.jobs_repository import claim_inbound_message
 from services import whatsapp
-from services.intake import ingest_text
-from services.notifier import NOTIFY_SIGNAL
-from workers.queue_signal import notify
+from services.bot_intake import (
+    ERROR_TEXT,
+    HELP_TEXT,
+    content_too_large,
+    ingest_for_bot,
+    wake_notifier,
+)
 
 logger = logging.getLogger("JobMatchServer")
 
 router = APIRouter(tags=["whatsapp"])
 
-HELP_TEXT = "שלח לי הודעה עם קישורים למשרות (אפשר להעביר הודעה מקבוצת משרות), ואחזיר ציון לכל משרה."
+# סוגים שאינם בקשה מהמשתמש: תגובת אימוג'י (👍 על הודעת ציון), הודעות מערכת. לא עונים עליהם:
+# כל תשובה נספרת במכסת הודעות השירות.
+SILENT_TYPES = {"reaction", "system", "unsupported"}
 
 
 def _config_or_404() -> whatsapp.WhatsAppConfig:
@@ -46,48 +53,18 @@ async def verify_webhook(
     raise HTTPException(status_code=403, detail="Verification failed")
 
 
-def _ack_text(result: dict) -> str:
-    added, skipped = result.get("added", 0), result.get("skipped", 0)
-    ignored = len(result.get("ignored") or [])
-    if not added and not skipped:
-        extra = f" (סיננתי {ignored} קישורים שאינם משרות)" if ignored else ""
-        return f"לא מצאתי קישורי משרות בהודעה{extra}.\n{HELP_TEXT}"
-    parts = []
-    if added:
-        parts.append(f"קיבלתי {added} משרות חדשות ✅ אשלח ציון לכל אחת כשהניתוח יסתיים.")
-    if skipped:
-        parts.append(f"{skipped} כבר נסרקו בעבר: אשלח את התוצאה הקיימת.")
-    if ignored:
-        parts.append(f"סיננתי {ignored} קישורים שאינם משרות.")
-    return "\n".join(parts)
-
-
-# סוגים שאינם בקשה מהמשתמש: תגובת אימוג'י (👍 על הודעת ציון), הודעות מערכת. לא עונים עליהם:
-# כל תשובה נספרת במכסת הודעות השירות.
-SILENT_TYPES = {"reaction", "system", "unsupported"}
-
-# Meta מאחדת עד 1000 עדכונים ב-webhook אחד, עד 3MB (תיעוד ה-webhooks). גוף גדול יותר לא מגיע
-# מ-Meta, ולא קוראים אותו לזיכרון (נתיב בלי טוקן, ו-512MB ב-Render החינמי).
-MAX_BODY_BYTES = 4 * 1024 * 1024
-
-ERROR_TEXT = "משהו השתבש בטיפול בהודעה. נסה לשלוח אותה שוב בעוד כמה דקות."
-
-
 async def handle_message(config: whatsapp.WhatsAppConfig, message: whatsapp.IncomingMessage) -> None:
     if message.type in SILENT_TYPES:
         return
     try:
+        has_jobs = False
         if message.type != "text" or not message.text.strip():
-            await asyncio.to_thread(whatsapp.send_text, config, message.sender, HELP_TEXT)
-            return
-        result = await ingest_text(message.text, source=whatsapp.CHANNEL)
-        job_ids = [j["id"] for j in result.get("added_jobs") or []]
-        job_ids += [s["id"] for s in result.get("skipped_urls") or [] if s.get("id")]
-        for job_id in job_ids:
-            await add_job_notification(job_id, whatsapp.CHANNEL, message.sender)
-        await asyncio.to_thread(whatsapp.send_text, config, message.sender, _ack_text(result))
-        if job_ids:
-            notify(NOTIFY_SIGNAL)  # משרות שכבר הסתיימו בעבר נשלחות מיד
+            reply = HELP_TEXT
+        else:
+            reply, has_jobs = await ingest_for_bot(whatsapp.CHANNEL, message.sender, message.text)
+        await asyncio.to_thread(whatsapp.send_text, config, message.sender, reply)
+        if has_jobs:
+            wake_notifier()  # אחרי האישור, כדי שהציון לא יקדים אותו
     except Exception:
         # ההודעה כבר סומנה כמטופלת ו-Meta קיבלה 200, ולכן היא לא תגיע שוב: מודיעים למשתמש
         logger.exception(f"❌ WhatsApp: failed to handle message {message.message_id}")
@@ -97,11 +74,7 @@ async def handle_message(config: whatsapp.WhatsAppConfig, message: whatsapp.Inco
 @router.post("/whatsapp")
 async def receive_webhook(request: Request, background: BackgroundTasks):
     config = _config_or_404()
-    try:
-        too_big = int(request.headers.get("content-length") or 0) > MAX_BODY_BYTES
-    except ValueError:
-        too_big = True
-    if too_big:
+    if content_too_large(request.headers.get("content-length")):
         raise HTTPException(status_code=413, detail="Payload too large")
     raw = await request.body()
     if not whatsapp.verify_signature(raw, request.headers.get("x-hub-signature-256"), config.app_secret):

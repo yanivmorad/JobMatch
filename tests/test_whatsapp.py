@@ -332,7 +332,7 @@ async def test_failure_while_handling_tells_the_user(db, wa_env, sent, monkeypat
     async def broken(*_args, **_kwargs):
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(whatsapp_routes, "ingest_text", broken)
+    monkeypatch.setattr(whatsapp_routes, "ingest_for_bot", broken)
     raw, headers = _signed(_payload())
     async with _client() as client:
         await client.post("/webhooks/whatsapp", content=raw, headers=headers)
