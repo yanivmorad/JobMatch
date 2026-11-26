@@ -624,8 +624,8 @@ async def prune_inbound_messages(days: int = 8) -> int:
     return int(result.split()[-1])
 
 
-# חלון השירות של וואטסאפ: הודעה חופשית מותרת רק עד 24 שעות מההודעה של המשתמש. מחוץ לו
-# השליחה תיכשל בכל מקרה, ולכן התראה ישנה יותר לא נשלחת (ולא מנוסה שוב בכל צעד של הצינור).
+# כמה זמן אחרי ההודעה של המשתמש עוד שולחים לו את הציון (לכל ערוץ: notifier.CHANNEL_WINDOW_HOURS).
+# אחרי זה ההתראה לא נשלחת ולא מנוסה שוב בכל צעד של הצינור.
 NOTIFY_WINDOW_HOURS = 24
 
 
@@ -668,8 +668,10 @@ async def move_job_notifications(from_job_id: int, to_job_id: int) -> None:
             await conn.execute("DELETE FROM job_notifications WHERE job_id = $1", from_job_id)
 
 
-async def pending_job_notifications(channels: List[str]) -> List[dict]:
-    """התראות שעוד לא נשלחו, על משרות שהגיעו למצב סופי, בתוך חלון 24 השעות."""
+async def pending_job_notifications(
+    channels: List[str], window_hours: int = NOTIFY_WINDOW_HOURS
+) -> List[dict]:
+    """התראות שעוד לא נשלחו, על משרות שהגיעו למצב סופי, בתוך החלון (שעות מההודעה)."""
     pool = await get_pool()
     rows = await pool.fetch(
         """
@@ -683,7 +685,7 @@ async def pending_job_notifications(channels: List[str]) -> List[dict]:
         """,
         list(channels),
         list(NOTIFY_FINAL_STATUSES),
-        NOTIFY_WINDOW_HOURS,
+        window_hours,
     )
     jobs = []
     for row in rows:

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import sys
@@ -16,7 +17,9 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from db.postgres import close_pool, get_pool
 from routes.jobs_routes import router as jobs_router
 from routes.profile_routes import router as profile_router
+from routes.telegram_routes import router as telegram_router
 from routes.whatsapp_routes import router as whatsapp_router
+from services import telegram
 from scraper_service.resolvers import hiremetech_token_status
 from services.auth import configured_token, require_api_token
 from workers.worker_manager import (
@@ -44,12 +47,24 @@ def _cors_origins() -> list:
     return origins or ["*"]
 
 
+async def _register_telegram_webhook(config) -> None:
+    try:
+        await asyncio.to_thread(telegram.register_webhook, config)
+    except Exception as e:
+        logger.error(f"❌ Telegram: webhook registration failed: {type(e).__name__}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("🚀 Starting JobMatch Server...")
     if not configured_token():
         logger.warning("⚠️ API_TOKEN is not set - the API is open to anyone who can reach it (OK only locally)")
     await start_background_workers()
+    # בוט טלגרם: רושמים את ה-webhook בכל הפעלה (אותם ערכים), ברקע: ההפעלה לא מחכה לטלגרם,
+    # וכישלון לא מפיל את השרת. ההפניה נשמרת ב-app.state, אחרת ה-GC יכול לאסוף את המשימה.
+    tg = telegram.load_config()
+    if tg:
+        app.state.telegram_webhook_task = asyncio.create_task(_register_telegram_webhook(tg))
     yield
     logger.info("🛑 Shutting down...")
     await stop_background_workers()
@@ -70,8 +85,10 @@ _auth = [Depends(require_api_token)]
 app.include_router(jobs_router, prefix="/api", dependencies=_auth)
 # הדשבורד קורא ל- /api/profile/resume ו- /api/profile/context
 app.include_router(profile_router, prefix="/api/profile", dependencies=_auth)
-# בוטים: מחוץ ל-/api, כי Meta לא שולחת את API_TOKEN. האימות הוא חתימה (routes/whatsapp_routes.py)
+# בוטים: מחוץ ל-/api, כי Meta ו-Telegram לא שולחות את API_TOKEN. האימות: חתימה (וואטסאפ)
+# או סוד בכותרת (טלגרם), ראו routes/whatsapp_routes.py ו-routes/telegram_routes.py
 app.include_router(whatsapp_router, prefix="/webhooks")
+app.include_router(telegram_router, prefix="/webhooks")
 
 
 @app.get("/ping")
