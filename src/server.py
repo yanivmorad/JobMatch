@@ -16,6 +16,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from db.postgres import close_pool, get_pool
 from routes.jobs_routes import router as jobs_router
 from routes.profile_routes import router as profile_router
+from routes.whatsapp_routes import router as whatsapp_router
 from scraper_service.resolvers import hiremetech_token_status
 from services.auth import configured_token, require_api_token
 from workers.worker_manager import (
@@ -69,6 +70,8 @@ _auth = [Depends(require_api_token)]
 app.include_router(jobs_router, prefix="/api", dependencies=_auth)
 # הדשבורד קורא ל- /api/profile/resume ו- /api/profile/context
 app.include_router(profile_router, prefix="/api/profile", dependencies=_auth)
+# בוטים: מחוץ ל-/api, כי Meta לא שולחת את API_TOKEN. האימות הוא חתימה (routes/whatsapp_routes.py)
+app.include_router(whatsapp_router, prefix="/webhooks")
 
 
 @app.get("/ping")

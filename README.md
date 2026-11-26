@@ -82,6 +82,8 @@ See `.env.example` for every variable. The important ones:
 | `ENABLE_PLAYWRIGHT` | `false` = no browser (saves ~300 MB RAM). |
 | `IDLE_POLL_MAX_SECONDS` | Safety-net queue polling when idle (default 3600). |
 | `RESUME_TEXT`, `PERSONAL_CONTEXT_TEXT` (or `*_FILE`) | Seed the profile on first run. |
+| `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ALLOWED_NUMBERS` | The WhatsApp bot (all five, or the bot is off). See [WhatsApp bot](#whatsapp-bot). `WHATSAPP_GRAPH_VERSION` is optional (default `v27.0`). |
+| `RENDER_EXTERNAL_URL` | Set by Render itself; the bot links to the dashboard with it. Not needed locally. |
 
 The personal context file is part of the prompt and its rules win: hard filters (student
 roles, mandatory degree...), scoring tiers and how to judge the chance of an interview.
@@ -100,9 +102,12 @@ roles, mandatory degree...), scoring tiers and how to judge the chance of an int
 | `GET/POST /api/profile/resume`, `/api/profile/context` | The profile (stored in the DB). |
 | `GET /health` | DB, workers, AI quota state, HireMeTech token expiry. 503 when degraded. |
 | `GET /ping` | Liveness without touching the DB (for health checks / keep-alive). |
+| `GET /webhooks/whatsapp` | Meta's one-time webhook verification (echoes `hub.challenge`). 404 while the bot is not configured. |
+| `POST /webhooks/whatsapp` | Incoming WhatsApp messages. No `API_TOKEN`: checked by the `X-Hub-Signature-256` signature (App Secret). |
 
 A bot only needs `POST /api/jobs/raw` with the message text and then `GET /api/jobs/{id}` until
-the status is `COMPLETED` (or a failure status).
+the status is `COMPLETED` (or a failure status). The WhatsApp bot does this inside the server: it
+queues the message's links and sends the score back when each job finishes.
 
 ## Limits of the free services (checked 2026-11-22)
 
@@ -135,6 +140,18 @@ smallest 0.25 CU), the compute scales to zero after 5 min without queries (suspe
 free), 5 GB egress, and no deletion for inactivity. JobMatch is built to let it sleep: workers
 are woken by new jobs instead of polling, idle polling is hourly, and `/ping` doesn't query.
 
+**WhatsApp Cloud API** (checked 2026-11-26; pricing: https://developers.facebook.com/docs/whatsapp/pricing). Messages from the
+user to the bot are free. Replies inside the 24-hour customer service window (opened by the user's
+message) are *service* messages: 1,000 free per business phone number per month, then charged
+(since 2026-10-01; the rate card is a separate file - a payment method must be on file or
+service messages stop after the free tier). Free-form text is allowed only inside that window,
+so the bot answers only people who wrote to it, and the score usually arrives within minutes.
+Text body: max 4096 characters. Throughput: 1 message per 6 seconds to the same user (bursts
+allowed). A webhook that is not answered with 200 is retried for up to 7 days and may arrive
+more than once - the bot deduplicates by message id. Some webhooks are not sent while the Meta
+app is in Dev mode. The temporary access token from the dashboard expires within hours; use a
+System User token.
+
 **Supabase (free)** would also work (500 MB database), but free projects are **paused after one
 week of inactivity**. **Render's free Postgres** is deleted 30 days after creation.
 
@@ -146,8 +163,7 @@ week of inactivity**. **Render's free Postgres** is deleted 30 days after creati
    Fill in `DATABASE_URL`, `GEMINI_API_KEY`, `JINA_API_KEY`, `RESUME_TEXT`,
    `PERSONAL_CONTEXT_TEXT` (and `HIRE_ME_TECH_TOKEN` if you have one). Render generates
    `API_TOKEN`; copy it from the service's Environment page - the dashboard asks for it once.
-   Render's docs don't say explicitly whether Docker services may use the free instance type;
-   if the Blueprint is refused, pick `starter`.
+   A Docker service on the free instance type worked (deployed 2026-11-25).
 3. Open `https://<service>.onrender.com`. `/health` should report `"status": "ok"`.
 
 Instead of `RESUME_TEXT`, you can add Render *secret files* named `resume.txt` and
@@ -168,11 +184,22 @@ wait until the next visit or message wakes the service (~1 minute). The alternat
 paid `starter` instance (0.5 CPU / 512 MB, no spin-down) - its price was not on the Render docs
 pages checked; see the pricing page.
 
+## WhatsApp bot
+
+Forward a job message to the bot's WhatsApp number; it answers with how many jobs it queued, then
+sends the score of each job when the analysis finishes (or why it failed). Only the numbers in
+`WHATSAPP_ALLOWED_NUMBERS` get an answer. Step-by-step setup in Meta and Render (Hebrew):
+[docs/whatsapp-setup.md](docs/whatsapp-setup.md). Without the five `WHATSAPP_*` variables the
+webhook answers 404 and nothing else changes.
+
+On the free Render plan a message that arrives while the service sleeps wakes it; Meta retries
+until it gets a 200, so nothing is lost, but the first answer can take a minute or more.
+
 ## Project layout
 
 ```
 src/
-  server.py               FastAPI app: /api, /health, /ping, serves dashboard/dist
+  server.py               FastAPI app: /api, /webhooks, /health, /ping, serves dashboard/dist
   workers/                resolver / scraper / AI / maintenance loops, rate limiter, wake-ups
   engine.py               Gemini call, prompt, response schema (Pydantic)
   scraper_service/        resolvers (HireMeTech), Jina + Playwright scraper, ATS APIs, validation

@@ -65,3 +65,20 @@ async def test_resolved_url_is_stored_without_tracking_params(db, monkeypatch):
     job = await get_job_by_url("https://jobs.lever.co/acme/9?lever-origin=applied")
     assert job is not None and job["status"] == "WAITING_FOR_SCRAPE"
     assert job["source_url"] == "https://hiremetech.com/job/2"
+
+
+async def test_duplicate_hands_the_bot_notification_to_the_original(db, monkeypatch):
+    """הצד של ה-resolver: מסמן DUPLICATE ומעביר את ההתראה למשרה המקורית."""
+    from db.jobs_repository import add_job_notification
+    from db.postgres import get_pool
+
+    company_job = "https://www.comeet.com/jobs/acme/1A.2B3/dev/4C.5D6"
+    original = await add_new_job(company_job)
+    dup = await add_new_job("https://hiremetech.com/job/7", source="whatsapp")
+    await add_job_notification(dup, "whatsapp", "972501234567")
+
+    await _run_resolver_once(monkeypatch, lambda u: company_job)
+
+    assert (await get_job_by_url("https://hiremetech.com/job/7"))["status"] == "DUPLICATE"
+    rows = await (await get_pool()).fetch("SELECT job_id FROM job_notifications")
+    assert [r["job_id"] for r in rows] == [original]

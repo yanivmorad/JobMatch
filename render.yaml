@@ -35,6 +35,19 @@ services:
       # --- optional ---
       - key: HIRE_ME_TECH_TOKEN    # valid 7 days; without it HireMeTech jobs use the public page
         sync: false
+      # --- WhatsApp bot (optional; all five or the bot stays off - docs/whatsapp-setup.md) ---
+      - key: WHATSAPP_VERIFY_TOKEN
+        generateValue: true        # copy it from the Environment page into Meta's "Verify token"
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_ALLOWED_NUMBERS  # e.g. 972501234567
+        sync: false
+      - key: WHATSAPP_GRAPH_VERSION    # Graph API version for sending; raise it when Meta retires this one
+        value: "v27.0"
       # 0.1 CPU is too little for Chromium: rely on the ATS APIs + Jina. Set "true" on a paid plan.
       - key: ENABLE_PLAYWRIGHT
         value: "false"

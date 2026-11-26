@@ -10,6 +10,17 @@ load_dotenv()
 TEST_DSN = (os.getenv("TEST_DATABASE_URL") or "").strip() or None
 
 
+@pytest.fixture(autouse=True)
+def _no_real_bots(monkeypatch):
+    """
+    load_dotenv למעלה טוען גם WHATSAPP_* אם מישהו הגדיר אותם ב-.env. אז notifier_worker
+    אמיתי היה עולה בבדיקה ששולחת הודעות אמיתיות. רק fixture מפורש (wa_env) מגדיר אותם.
+    """
+    for key in list(os.environ):
+        if key.startswith("WHATSAPP_"):
+            monkeypatch.delenv(key)
+
+
 def _assert_disposable(dsn: str):
     """הגנה: הבדיקות מוחקות את כל הסכמה, לכן מותר רק DB ששמו מכיל 'test'."""
     db_name = urlparse(dsn).path.lstrip("/")
