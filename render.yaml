@@ -48,6 +48,11 @@ services:
         sync: false
       - key: WHATSAPP_GRAPH_VERSION    # Graph API version for sending; raise it when Meta retires this one
         value: "v27.0"
+      # --- Telegram bot (optional; docs/telegram-setup.md) ---
+      - key: TELEGRAM_BOT_TOKEN        # from @BotFather; set = bot on
+        sync: false
+      - key: TELEGRAM_ALLOWED_CHAT_IDS # send the bot /id to get yours
+        sync: false
       # 0.1 CPU is too little for Chromium: rely on the ATS APIs + Jina. Set "true" on a paid plan.
       - key: ENABLE_PLAYWRIGHT
         value: "false"

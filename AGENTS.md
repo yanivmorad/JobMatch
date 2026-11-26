@@ -13,8 +13,8 @@
 | `src/workers/` | resolver, scraper, AI, תחזוקה, rate limiter, `queue_signal` (התעוררות) |
 | `src/scraper_service/` | HireMeTech, ATS APIs (`site_apis.py`), Jina/HTML/Playwright, `validate_content` |
 | `src/engine.py` | פרומפט, קריאה ל-Gemini, סכמת התשובה |
-| `src/services/` | `link_extractor` (intake + resolver + תצוגה מקדימה), intake, auth, profile, `whatsapp` + `notifier` (בוט, `docs/whatsapp-setup.md`) |
-| `src/routes/whatsapp_routes.py` | `/webhooks/whatsapp`: מחוץ ל-`/api`, בלי טוקן, אימות בחתימה. כבוי (404) בלי משתני `WHATSAPP_*` |
+| `src/services/` | `link_extractor` (intake + resolver + תצוגה מקדימה), intake, auth, profile. בוטים: `bot_intake` (משותף), `whatsapp`, `telegram`, `notifier` (ציון חוזר לשולח) |
+| `src/routes/{whatsapp,telegram}_routes.py` | `/webhooks/*`: מחוץ ל-`/api`, בלי טוקן, אימות בחתימה / סוד. כבוי (404) בלי ההגדרות. הקמה: `docs/{whatsapp,telegram}-setup.md` |
 | `dashboard/` | React/Vite/Tailwind. `src/services/taskService.js` = כל קריאות ה-API, `src/constants/jobStatus.js`, `src/styles/tokens.css` |
 | `tests/` | pytest. בדיקות DB דורשות `TEST_DATABASE_URL`. `tests/js/` רץ ב-Node מתוך pytest |
 | `scripts/` | בדיקה על נתונים אמיתיים (**צורכים מכסה**) |

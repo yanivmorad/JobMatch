@@ -83,7 +83,8 @@ See `.env.example` for every variable. The important ones:
 | `IDLE_POLL_MAX_SECONDS` | Safety-net queue polling when idle (default 3600). |
 | `RESUME_TEXT`, `PERSONAL_CONTEXT_TEXT` (or `*_FILE`) | Seed the profile on first run. |
 | `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ALLOWED_NUMBERS` | The WhatsApp bot (all five, or the bot is off). See [WhatsApp bot](#whatsapp-bot). `WHATSAPP_GRAPH_VERSION` is optional (default `v27.0`). |
-| `RENDER_EXTERNAL_URL` | Set by Render itself; the bot links to the dashboard with it. Not needed locally. |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_CHAT_IDS` | The Telegram bot: the token from @BotFather turns it on; only the listed chat ids get answers (until then the bot answers only `/id`). See [Telegram bot](#telegram-bot). |
+| `RENDER_EXTERNAL_URL` | Set by Render itself (the service's full onrender.com URL). The bots link to the dashboard with it, and the Telegram webhook is registered at it on every start. Not set locally. |
 
 The personal context file is part of the prompt and its rules win: hard filters (student
 roles, mandatory degree...), scoring tiers and how to judge the chance of an interview.
@@ -104,6 +105,7 @@ roles, mandatory degree...), scoring tiers and how to judge the chance of an int
 | `GET /ping` | Liveness without touching the DB (for health checks / keep-alive). |
 | `GET /webhooks/whatsapp` | Meta's one-time webhook verification (echoes `hub.challenge`). 404 while the bot is not configured. |
 | `POST /webhooks/whatsapp` | Incoming WhatsApp messages. No `API_TOKEN`: checked by the `X-Hub-Signature-256` signature (App Secret). |
+| `POST /webhooks/telegram` | Incoming Telegram updates. No `API_TOKEN`: checked by the `X-Telegram-Bot-Api-Secret-Token` header (derived from the bot token). 404 while the bot is not configured. |
 
 A bot only needs `POST /api/jobs/raw` with the message text and then `GET /api/jobs/{id}` until
 the status is `COMPLETED` (or a failure status). The WhatsApp bot does this inside the server: it
@@ -139,6 +141,14 @@ unusually high volume of outbound traffic (JobMatch makes a handful of requests 
 smallest 0.25 CU), the compute scales to zero after 5 min without queries (suspended time is
 free), 5 GB egress, and no deletion for inactivity. JobMatch is built to let it sleep: workers
 are woken by new jobs instead of polling, idle polling is hourly, and `/ping` doesn't query.
+
+**Telegram Bot API** (checked 2026-11-26, core.telegram.org/bots). Free: bots message their users
+at no cost (paid broadcasts start above ~30 messages/second). Webhook only over HTTPS on ports 443,
+80, 88 or 8443; a webhook and `getUpdates` can't be used together. A request that doesn't get a
+2XX is retried "a reasonable number of attempts", and undelivered updates are kept up to 24 hours,
+so a message sent while Render sleeps still arrives; `update_id` dedupes repeats. Sending: avoid
+more than one message per second in a single chat; `text` is up to 4096 characters (the
+`sendMessage` reference, read from a summary of the page).
 
 **WhatsApp Cloud API** (checked 2026-11-26; pricing: https://developers.facebook.com/docs/whatsapp/pricing). Messages from the
 user to the bot are free. Replies inside the 24-hour customer service window (opened by the user's
@@ -194,6 +204,14 @@ webhook answers 404 and nothing else changes.
 
 On the free Render plan a message that arrives while the service sleeps wakes it; Meta retries
 until it gets a 200, so nothing is lost, but the first answer can take a minute or more.
+
+## Telegram bot
+
+The same as the WhatsApp bot, with a simpler setup: create a bot with @BotFather, put its token in
+`TELEGRAM_BOT_TOKEN` on Render and deploy. On every start the server registers its webhook at
+`RENDER_EXTERNAL_URL`/webhooks/telegram with a secret derived from the token. Send the bot `/id`,
+put the number it answers in `TELEGRAM_ALLOWED_CHAT_IDS` and deploy again. Step by step (Hebrew):
+[docs/telegram-setup.md](docs/telegram-setup.md).
 
 ## Project layout
 
